@@ -1,0 +1,7 @@
+--- 
+
+- name : "reload config"
+  service: 
+      name : fail2ban
+      state : restarted
+      enabled : true

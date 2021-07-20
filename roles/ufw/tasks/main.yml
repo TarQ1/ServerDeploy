@@ -1,0 +1,32 @@
+--- 
+
+- name : "update apt"
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name : "install ufw"
+  apt:
+    pkg=ufw
+    state=latest
+  
+- name : authorise ssh
+  community.general.ufw:
+    rule: allow 
+    port: '667'
+    proto: tcp
+
+- name : authorise minecraft
+  community.general.ufw:
+    rule: allow 
+    port: '25565'
+    proto: any
+
+- name : Deny everything
+  community.general.ufw:
+    state: enabled
+    policy: deny
+
+- name : Set logging
+  community.general.ufw:
+    logging: 'on'

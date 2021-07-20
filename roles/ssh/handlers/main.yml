@@ -1,0 +1,7 @@
+--- 
+
+- name : "reload config"
+  service: 
+      name : sshd
+      state : restarted
+      enabled : true

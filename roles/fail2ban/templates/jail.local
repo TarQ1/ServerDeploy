@@ -1,0 +1,12 @@
+[DEFAULT]
+
+bantime = 1d
+maxretry = 5
+backend = auto
+
+[sshd]
+enabled  = true
+port    = 667
+logpath = %(sshd_log)s
+backend = %(sshd_backend)s
+banaction = iptables-allports
