@@ -24,4 +24,9 @@
     group: root
     mode: "0644"
 
+- name: "reload config"
+  service:
+    name: fail2ban
+    state: reloaded
+
   notify: "reload config"

@@ -1,10 +1,11 @@
 [DEFAULT]
 
-bantime = 365d
+bantime = 31536000
 maxretry = 5
 backend = auto
 
 [sshd]
+mode = aggressive
 enabled  = true
 port    = 667
 logpath = %(sshd_log)s
