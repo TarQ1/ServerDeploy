@@ -4,6 +4,5 @@
   become: true
   remote_user: sylvain
   roles:
-    - ufw
     - fail2ban
     - ssh

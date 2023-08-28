@@ -1,6 +1,6 @@
 [DEFAULT]
 
-bantime = 1d
+bantime = 365d
 maxretry = 5
 backend = auto
 
