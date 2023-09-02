@@ -27,6 +27,6 @@
 - name: "reload config"
   service:
     name: fail2ban
-    state: reloaded
+    state: restarted
 
   notify: "reload config"
