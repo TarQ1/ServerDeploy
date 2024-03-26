@@ -1,8 +1,6 @@
---- 
-
+---
 - hosts: croustillant
   become: true
   remote_user: sylvain
   roles:
-    - fail2ban
-    - ssh
+    - stuvusIT.smartd
