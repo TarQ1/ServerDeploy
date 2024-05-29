@@ -2,6 +2,6 @@
 
 all:
   hosts:
-    croustillant:
+    terrarium:
       ansible_host: 127.0.0.1
-      ansible_ssh_port: 667
+      ansible_ssh_port: 22

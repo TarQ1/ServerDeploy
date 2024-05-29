@@ -2,3 +2,4 @@
 
 - import_playbook: playbooks/security.yml
 - import_playbook: playbooks/monitoring.yml
+- import_playbook: playbooks/mount.yml

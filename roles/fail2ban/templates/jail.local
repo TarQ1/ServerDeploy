@@ -7,7 +7,7 @@ backend = auto
 [sshd]
 mode = aggressive
 enabled = true
-port = 667
+port = 22
 logpath = %(sshd_log)s
 backend = %(sshd_backend)s
 banaction = iptables-allports[actname=f2b-ssh-input, name=f2b-ssh-input,protocol=all, blocktype=DROP]
@@ -19,7 +19,7 @@ maxretry = 3
 filter = sshd
 mode = aggressive
 enabled = true
-port = 667
+port = 22
 logpath = %(sshd_log)s
 backend = %(sshd_backend)s
 banaction = iptables-allports[actname=f2b-ssh-forward,name=f2b-ssh-forward protocol=all, blocktype=DROP]

@@ -1,6 +1,6 @@
 --- 
 
-- hosts: croustillant
+- hosts: terrarium
   become: true
   remote_user: sylvain
   roles:

@@ -3,4 +3,4 @@
   become: true
   remote_user: sylvain
   roles:
-    - stuvusIT.smartd
+    - mount
