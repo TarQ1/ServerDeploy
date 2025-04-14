@@ -5,23 +5,26 @@ maxretry = 5
 backend = auto
 
 [sshd]
+maxretry = 3
 mode = aggressive
 enabled = true
 port = 22
 logpath = %(sshd_log)s
-backend = %(sshd_backend)s
+backend=systemd
 banaction = iptables-allports[actname=f2b-ssh-input, name=f2b-ssh-input,protocol=all, blocktype=DROP]
 protocol=all
 chain=INPUT
 
+
+
 [ssh-FORWARD]
-maxretry = 3
 filter = sshd
+maxretry = 3
 mode = aggressive
 enabled = true
 port = 22
 logpath = %(sshd_log)s
-backend = %(sshd_backend)s
+backend=systemd
 banaction = iptables-allports[actname=f2b-ssh-forward,name=f2b-ssh-forward protocol=all, blocktype=DROP]
 protocol=all
 chain=FORWARD

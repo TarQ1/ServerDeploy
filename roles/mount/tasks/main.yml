@@ -2,45 +2,37 @@
 
 - name : "mount md0 harddrive"
   ansible.posix.mount:
-    path: /media/md0
-    src: /dev/md0
+    path: UUID=e3c6d63f-9105-4b12-82f3-91947ab1a565
+    src: /dev/disk0
     fstype: ext4
     opts: defaults
-    state: mounted
+    state: present
 
 - name : "mount md2 harddrive"
   ansible.posix.mount:
-    path: /media/md2
-    src: /dev/md2
+    path: UUID=ca233860-2ba8-483d-a0e3-868e02c56bec
+    src: /dev/disk1
     fstype: ext4
     opts: defaults
-    state: mounted
+    state: present
 
 - name : "mount sda1 harddrive"
   ansible.posix.mount:
     path: /media/big
-    src: /dev/sda1
+    src: UUID=b365daec-de01-4e3a-9d0c-f91e7748f0ac
     fstype: btrfs
     opts: defaults
-    state: mounted
+    state: present
 
-# NAME                      MAJ:MIN RM   SIZE RO TYPE  MOUNTPOINTS
-# sda                         8:0    0  14.6T  0 disk  
-# └─sda1                      8:1    0  14.6T  0 part  
-# sdb                         8:16   0   3.6T  0 disk  
-# └─sdb1                      8:17   0   3.6T  0 part  
-#   └─md2                     9:2    0   3.6T  0 raid1 /media/md2
-# sdc                         8:32   0   3.6T  0 disk  
-# └─sdc1                      8:33   0   3.6T  0 part  
-#   └─md0                     9:0    0   3.6T  0 raid1 /media/md0
-# sdd                         8:48   0 223.6G  0 disk  
-# ├─sdd1                      8:49   0   512M  0 part  
-# ├─sdd2                      8:50   0     1G  0 part  
-# └─sdd3                      8:51   0 222.1G  0 part  
-#   └─ubuntu--vg-ubuntu--lv 254:2    0 222.1G  0 lvm   
-# nvme0n1                   259:0    0 232.9G  0 disk  
-# ├─nvme0n1p1               259:1    0   512M  0 part  /boot/efi
-# ├─nvme0n1p2               259:2    0   488M  0 part  /boot
-# └─nvme0n1p3               259:3    0 231.9G  0 part  
-#   ├─terrarium--vg-root    254:0    0 230.9G  0 lvm   /
-#   └─terrarium--vg-swap_1  254:1    0   976M  0 lvm   [SWAP]
+# use lineinfile to change the dns server to 9.9.9.9
+- name: "change dns server add 9.9.9.9 DNS"
+  lineinfile:
+    path: /etc/resolv.conf
+    line: "nameserver 9.9.9.9"
+    state: present
+
+- name: "remove default dns server"
+  lineinfile:
+    path: /etc/resolv.conf
+    line: "nameserver 192.168.1.254"
+    state: absent
