@@ -32,7 +32,8 @@ fatal: [terrarium]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Fail
 ```
 
 Then try to add key to the ssh-agent:
-````
+
+```
 # start the ssh-agent in the background
 eval "$(ssh-agent -s)"
 # add the SSH private key to the ssh-agent
@@ -40,5 +41,6 @@ ssh-add ~/.ssh/id_ed25519
 ```
 
 ## License
+
 This project is licensed under the GNU Affero General Public License v3.0 (AGPL v3.0). See the LICENSE file for details.
 
