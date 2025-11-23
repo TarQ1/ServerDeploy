@@ -24,7 +24,6 @@
     opts: defaults
     state: present
 
-# use lineinfile to change the dns server to 9.9.9.9
 - name: "change dns server add 9.9.9.9 DNS"
   lineinfile:
     path: /etc/resolv.conf

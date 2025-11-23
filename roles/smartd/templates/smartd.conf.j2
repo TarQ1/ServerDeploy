@@ -31,12 +31,10 @@
 	{%- if config.test_schedule | d(smartd_default_test_schedule) %}
 		{{- " -s " }}{{ config.test_schedule | d(smartd_default_test_schedule) -}}{{' \\\n'}}
 	{%- endif %}
-	{%- if 'mail_recipients' in config or smartd_default_mail_recipients %}
-        {{- " -m " }}{{ config.mail_recipients | d(smartd_default_mail_recipients) | join(",") -}}{{' \\\n'}}
-		{{- " -M " }}{{ config.mail_frequency | d(smartd_default_mail_frequency) -}}{{' \\\n'}}
-		{%- if config.mail_script | d(smartd_default_mail_script) %}
-			{{- " -M exec " }}{{ config.mail_script | d(smartd_default_mail_script) -}}{{' \\\n'}}
-		{%- endif %}
+	{%- if alerting is defined and alerting.script %}
+		{{- " -m " }}{{ alerting.mail_recipients | d(smartd_default_mail_recipients) | join(",") | default("root", true) -}}{{' \\\n'}}
+		{{- " -M " }}{{ alerting.mail_frequency | d(smartd_default_mail_frequency) -}}{{' \\\n'}}
+		{{- " -M exec " }}{{ alerting.script -}}{{' \\\n'}}
 	{%- endif %}
 	{%- if config.report_ata_failure | d(smartd_default_report_ata_failure) %}
 		{{- " -f" -}}

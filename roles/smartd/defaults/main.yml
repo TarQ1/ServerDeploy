@@ -1,6 +1,10 @@
 ---
 smartd_devices:
-  DEVICESCAN: {}
+  DEVICESCAN: 
+    alerting:
+      script: "{{ smartd_alert_script_path }}"
+      mail_recipients: "{{ smartd_default_mail_recipients }}"
+      mail_frequency: "{{ smartd_default_mail_frequency }}"
 smartd_default_type: auto
 smartd_default_nocheck: standby,15,q
 smartd_default_check_type: normal
@@ -27,4 +31,5 @@ smartd_default_temperature_report_diff: 10
 smartd_default_temperature_report_info: 45
 smartd_default_temperature_report_crit: 50
 smartd_default_preset_mode: use
+
 ...

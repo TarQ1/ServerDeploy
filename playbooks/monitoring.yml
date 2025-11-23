@@ -3,4 +3,14 @@
   become: true
   remote_user: sylvain
   roles:
-    - stuvusIT.smartd
+    - role: smartd
+      smartd_devices:
+        /dev/sda: {}
+        /dev/sdb: {}
+        /dev/sdc: {}
+        /dev/sdd: {}
+      alerting:
+        mail_frequency: diminishing
+        temperature_report_info: 45
+        temperature_report_crit: 55
+        script: /usr/local/alert-disk.sh

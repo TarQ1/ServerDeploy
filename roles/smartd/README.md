@@ -46,6 +46,8 @@ You can find a detailed wall-of-text for each one on the [smartd man page](https
 | `vendor_formats`             |                       `[]`                        | List of options to rewrite interpretation of raw SMART values and their interpretation.                                                                                           |
 | `preset_mode`                |                       `use`                       | Set to `ignore` if you don't want to use known presets for a detected drive.                                                                                                      |
 
+                                                                    |
+
 ## Example Playbook
 
 ```yml
