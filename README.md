@@ -1,46 +1,76 @@
 # ServerDeploy
 
-Basic Ansible roles to deploy and configure my homelab server.
+Ansible playbooks to deploy and configure a homelab server with RAID1 storage, security hardening, and monitoring.
 
-## Prerequisites
+## Quick Start
 
-Ansible installed & SSH access to the target server(s).
+```bash
+# Check what will change (dry-run)
+ansible-playbook --ask-become-pass --check --diff full.yml -i inventory.yml
 
-## To check for diff before applying:
+# Apply all configurations
+ansible-playbook --ask-become-pass full.yml -i inventory.yml
+```
 
-`ansible-playbook --ask-become-pass --check --diff full.yml`
+## Playbooks
 
-## to check a specific playbook:
+### `full.yml` (Main)
+Runs all configurations in order:
+1. **disks.yml** - RAID1 setup & mounts
+2. **security.yml** - Security hardening
+3. **monitoring.yml** - Disk monitoring
 
-`ansible-playbook --ask-become-pass --check --diff playbooks/mount.yml`
+### `disks.yml` (Standalone)
+Sets up RAID1 array and mounts:
+- Creates RAID1 from two 3.6TB disks
+- Mounts RAID at `/media/raid1`
+- Mounts existing storage at `/media/big`
+- Configures DNS
 
-## To run:
+Run alone:
+```bash
+ansible-playbook --ask-become-pass playbooks/disks.yml -i inventory.yml
+```
 
-`ansible-playbook --ask-become-pass full.yml`
+Override variables:
+```bash
+ansible-playbook --ask-become-pass playbooks/disks.yml -i inventory.yml \
+  -e "raid_allow_wipe=true"
+```
 
 ## Roles
 
-- monitoring: sets up smartmontools for disks heath monitoring
-- security: sets up basic security settings (fail2ban, sshd config)
-- mount: configures mounts and fstab entries (it also adds dns entries in resolv.conf)
+- **raid1** - Creates RAID1 array with write-intent bitmap
+- **smartd** - Disk health monitoring with alerts
+- **security** - SSH hardening, fail2ban
 
-## Troubeshooting
+## Storage Configuration
 
-if we get:
-```
-fatal: [terrarium]: UNREACHABLE! => {"changed": false, "msg": "Task failed: Failed to connect to the host via ssh: xxxxxx@127.0.0.1: Permission denied (publickey).", "unreachable": true}
-```
+- **RAID Disks**: Two 3.6TB Seagate ST4000DM004 drives (by disk ID for persistence)
+- **RAID Array**: `/dev/md127` (ext4)
+- **Mount Point**: `/media/raid1`
+- **Big Drive**: 14.6TB TOSHIBA at `/media/big` (btrfs)
 
-Then try to add key to the ssh-agent:
+## Verify Setup
 
-```
-# start the ssh-agent in the background
+See each roles README for verification steps.
+
+## Troubleshooting
+
+### SSH Permission Denied
+
+```bash
+# Start SSH agent
 eval "$(ssh-agent -s)"
-# add the SSH private key to the ssh-agent
+# Add key
 ssh-add ~/.ssh/id_ed25519
 ```
 
+## Documentation
+
+- `roles/raid1/README.md` - Detailed RAID1 documentation
+
 ## License
 
-This project is licensed under the GNU Affero General Public License v3.0 (AGPL v3.0). See the LICENSE file for details.
+GNU Affero General Public License v3.0 (AGPL v3.0) - See LICENSE file
 

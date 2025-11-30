@@ -1,0 +1,24 @@
+---
+- hosts: terrarium
+  become: true
+  remote_user: sylvain
+  vars:
+    # TODO: install my own DNS servers
+    dns_servers:
+      - nameserver 9.9.9.9
+    dns_servers_remove:
+      - nameserver 192.168.1.254
+  tasks:
+    - name: Add DNS servers
+      ansible.builtin.lineinfile:
+        path: /etc/resolv.conf
+        line: "{{ item }}"
+        state: present
+      loop: "{{ dns_servers }}"
+
+    - name: Remove default DNS servers
+      ansible.builtin.lineinfile:
+        path: /etc/resolv.conf
+        line: "{{ item }}"
+        state: absent
+      loop: "{{ dns_servers_remove }}"
