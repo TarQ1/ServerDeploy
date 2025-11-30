@@ -60,6 +60,23 @@ ansible-playbook playbooks/raid.yml -i inventory.yml --ask-become-pass -e "raid_
 
 ## Monitoring
 
+RAID health is monitored via `mdmonitor.service` which runs `mdadm --monitor --scan`. The service automatically invokes the `PROGRAM` directive configured in `/etc/mdadm/mdadm.conf`.
+
+### Monitoring Setup
+
+The role automatically:
+1. Adds `PROGRAM /usr/local/alert-raid.sh` to `/etc/mdadm/mdadm.conf`
+2. Starts the `mdmonitor` systemd service
+
+### Alert Script
+
+We should copy `alert-raid.sh` to `/usr/local/alert-raid.sh` !!
+
+The alert script sends Discord notifications for non-clean RAID states (degraded, recovering, etc.).
+
+
+### Manual Checks
+
 ```bash
 # Check array status
 sudo mdadm --detail /dev/md127
@@ -69,6 +86,22 @@ cat /proc/mdstat
 
 # Check mount
 df -h /media/raid1
+
+# View mdmonitor service status
+sudo systemctl status mdmonitor.service
+
+# View recent RAID events in journal
+sudo journalctl -u mdmonitor.service -n 50
+```
+
+### Test Monitoring
+
+
+To simulate a disk failure and trigger alerts:
+```bash
+sudo mdadm /dev/md127 --fail /dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6
+sudo mdadm /dev/md127 --remove /dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6
+sudo mdadm /dev/md127 --add /dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6
 ```
 
 ## Important
@@ -78,3 +111,4 @@ df -h /media/raid1
 - **Safety**: Requires explicit `raid_allow_wipe=true` to modify devices
 - **Array naming**: Creates as `/dev/md127` (kernel auto-assigns)
 - **Bitmap**: Enables write-intent bitmap for faster recovery
+- **Monitoring**: Integrated with Discord alerting for real-time status updates

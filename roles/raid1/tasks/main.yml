@@ -86,6 +86,25 @@
   failed_when: false
   ignore_errors: true
 
+# add PROGRAM line to mdadm.conf if not present
+- name: Ensure mdadm monitor PROGRAM line is present in mdadm.conf
+  ansible.builtin.lineinfile:
+    path: /etc/mdadm/mdadm.conf
+    line: "PROGRAM /usr/local/alert-raid.sh"
+    create: true
+    state: present
+  failed_when: false
+  ignore_errors: true
+
+# Ensure mdmonitor service is started
+- name: Start mdmonitor service
+  ansible.builtin.service:
+    name: mdmonitor
+    state: started
+    enabled: yes
+  failed_when: false
+  ignore_errors: true
+
 - name: Display RAID1 status
   ansible.builtin.shell: |
     mdadm --detail {{ raid_device }}
