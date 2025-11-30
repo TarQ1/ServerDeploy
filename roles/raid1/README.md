@@ -70,10 +70,12 @@ The role automatically:
 
 ### Alert Script
 
-We should copy `alert-raid.sh` to `/usr/local/alert-raid.sh` !!
-
 The alert script sends Discord notifications for non-clean RAID states (degraded, recovering, etc.).
 
+**Configuration**: Update the webhook URL in `scripts/alert-raid.sh`:
+```bash
+readonly WEBHOOK_URL="your-discord-webhook-url-here"
+```
 
 ### Manual Checks
 
@@ -96,8 +98,30 @@ sudo journalctl -u mdmonitor.service -n 50
 
 ### Test Monitoring
 
+To test the alert script manually:
+```bash
+bash /home/sylvain/infra/scripts/alert-raid.sh
+```
+
+### Understanding RAID Status
+
+When rebuilding/recovering after a disk failure:
+```
+State : clean, degraded, recovering
+Active Devices : 1
+Working Devices : 2
+Spare Devices : 1
+```
+This is **normal** - the array is actively syncing data. Recovery completes when:
+```
+State : clean
+Active Devices : 2
+Working Devices : 2
+Spare Devices : 0
+```
 
 To simulate a disk failure and trigger alerts:
+
 ```bash
 sudo mdadm /dev/md127 --fail /dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6
 sudo mdadm /dev/md127 --remove /dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6
