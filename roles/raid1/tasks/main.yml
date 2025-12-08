@@ -70,6 +70,7 @@
     mdadm --detail --scan
   register: mdadm_scan_output
   changed_when: false
+  when: raid_create_result is changed
 
 - name: Ensure /etc/mdadm directory exists
   ansible.builtin.file:
@@ -84,7 +85,7 @@
     create: true
     state: present
   failed_when: false
-  ignore_errors: true
+  when: raid_create_result is changed
 
 # add PROGRAM line to mdadm.conf if not present
 - name: Ensure mdadm monitor PROGRAM line is present in mdadm.conf
