@@ -18,7 +18,7 @@
       - path: /media/raid1
         src: UUID=f4654bf8-23bb-48e3-b31b-5a09091825af
         fstype: ext4
-        opts: defaults,nofail
+        opts: defaults
       - path: /media/big
         src: UUID=b365daec-de01-4e3a-9d0c-f91e7748f0ac
         fstype: btrfs
