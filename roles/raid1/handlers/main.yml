@@ -1,8 +1,0 @@
----
-# RAID1 handlers
-
-- name: restart mdadm
-  ansible.builtin.systemd:
-    name: mdadm
-    state: restarted
-    enabled: yes

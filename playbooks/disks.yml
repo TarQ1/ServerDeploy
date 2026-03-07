@@ -4,25 +4,12 @@
   remote_user: sylvain
 
   vars:
-    # RAID1 Configuration
-    raid_devices:
-      - "/dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT33BX6"
-      - "/dev/disk/by-id/ata-ST4000DM004-2CV104_ZTT339A2"
-    raid_device: "/dev/md/raid1"
-    raid_fstype: "ext4"
-    raid_mount_opts: "defaults,nofail"
-    raid_allow_wipe: false
-
     # Mount points
-    mounts:
-      - path: /media/raid1
-        src: UUID=f4654bf8-23bb-48e3-b31b-5a09091825af
-        fstype: ext4
-        opts: defaults
-      - path: /media/big
-        src: UUID=b365daec-de01-4e3a-9d0c-f91e7748f0ac
-        fstype: btrfs
-        opts: defaults
+    # mounts:
+    #   - path: /media/big
+    #     src: UUID=b365daec-de01-4e3a-9d0c-f91e7748f0ac
+    #     fstype: btrfs
+    #     opts: defaults
 
     smartd_devices:
       /dev/sda: {}
@@ -35,22 +22,4 @@
       script: /usr/local/alert-disk.sh
 
   roles:
-    - raid1
     - smartd
-
-  tasks:
-    - name: Ensure mount point directory exists
-      ansible.builtin.file:
-        path: "{{  item.path }}"
-        state: directory
-        mode: '0755'
-      loop: "{{ mounts }}"
-
-    - name: Mount RAID1 and other filesystems
-      ansible.posix.mount:
-        path: "{{ item.path }}"
-        src: "{{ item.src }}"
-        fstype: "{{ item.fstype }}"
-        opts: "{{ item.opts }}"
-        state: present
-      loop: "{{ mounts }}"

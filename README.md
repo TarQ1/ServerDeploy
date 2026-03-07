@@ -1,6 +1,6 @@
 # ServerDeploy
 
-Ansible playbooks to deploy and configure a homelab server with RAID1 storage, security hardening, and monitoring.
+Ansible playbooks to deploy and configure a homelab server with storage, security hardening, and monitoring.
 
 ## Quick Start
 
@@ -16,14 +16,12 @@ ansible-playbook --ask-become-pass full.yml -i inventory.yml
 
 ### `full.yml` (Main)
 Runs all configurations in order:
-1. **disks.yml** - RAID1 setup & mounts
+1. **disks.yml** - mounts
 2. **security.yml** - Security hardening
 3. **monitoring.yml** - Disk monitoring
 
 ### `disks.yml` (Standalone)
-Sets up RAID1 array and mounts:
-- Creates RAID1 from two 3.6TB disks
-- Mounts RAID at `/media/raid1`
+Sets up mounts:
 - Mounts existing storage at `/media/big`
 - Configures DNS
 
@@ -40,16 +38,9 @@ ansible-playbook --ask-become-pass playbooks/disks.yml -i inventory.yml \
 
 ## Roles
 
-- **raid1** - Creates RAID1 array with write-intent bitmap
 - **smartd** - Disk health monitoring with alerts
 - **security** - SSH hardening, fail2ban
-
-## Storage Configuration
-
-- **RAID Disks**: Two 3.6TB Seagate ST4000DM004 drives (by disk ID for persistence)
-- **RAID Array**: `/dev/md127` (ext4)
-- **Mount Point**: `/media/raid1`
-- **Big Drive**: 14.6TB TOSHIBA at `/media/big` (btrfs)
+- **dns** - DNS configuration for target server
 
 ## Verify Setup
 
@@ -65,10 +56,6 @@ eval "$(ssh-agent -s)"
 # Add key
 ssh-add ~/.ssh/id_ed25519
 ```
-
-## Documentation
-
-- `roles/raid1/README.md` - Detailed RAID1 documentation
 
 ## License
 
