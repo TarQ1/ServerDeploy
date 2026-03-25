@@ -1,0 +1,14 @@
+[Unit]
+Description={{ inventory_hostname }} - {{ current_backup.name }} backup
+
+[Timer]
+{% if current_backup.backup_systemd_timers.custom | d(backup_restic_default_systemd_timers_custom) %}
+OnCalendar={{ current_backup.backup_systemd_timers.custom | d(backup_restic_default_systemd_timers_custom) }}
+{% else %}
+OnCalendar={{ current_backup.backup_systemd_timers.weekday | d(backup_restic_default_systemd_timers_weekday) }} {{ current_backup.backup_systemd_timers.year | d(backup_restic_default_systemd_timers_year) }}-{{ current_backup.backup_systemd_timers.month | d(backup_restic_default_systemd_timers_month) }}-{{ current_backup.backup_systemd_timers.day | d(backup_restic_default_systemd_timers_day) }} {{ current_backup.backup_systemd_timers.hour | d(backup_restic_default_systemd_timers_hour) }}:{{ current_backup.backup_systemd_timers.minute | d(backup_restic_default_systemd_timers_minute) }}:{{ current_backup.backup_systemd_timers.second | d(backup_restic_default_systemd_timers_second) }}
+{% endif %}
+Persistent=yes
+Unit=restic-backup-{{ current_backup.name }}.service
+
+[Install]
+WantedBy=multi-user.target

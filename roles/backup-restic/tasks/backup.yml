@@ -1,0 +1,69 @@
+---
+
+- name: Check if backup backend is valid
+  ansible.builtin.assert:
+    that:
+      - current_backup.backend is defined
+      - current_backup.backend.type in available_backends
+    fail_msg: "{{ current_backup.name }} doesn't have a valid backend configuration"
+    success_msg: "{{ current_backup.name }} has a valid backend configuration"
+
+- name: Register the backups dir path
+  ansible.builtin.set_fact:
+    current_backup_path: "{{ backup_restic_path }}/backups/{{ backup_restic_hostname }}_{{ current_backup.name }}"
+
+- name: Enable backup
+  when: current_backup.enabled
+  block:
+    - name: Create dir for current backup
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - "{{ current_backup_path }}"
+        - "{{ current_backup_path }}/hooks"
+        - "{{ current_backup_path }}/logs"
+
+    - name: Template backup files
+      ansible.builtin.template:
+        src: "srv/restic/{{ item }}.j2"
+        dest: "{{ current_backup_path }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0600"
+      loop:
+        - "files_to_include"
+        - "files_to_exclude"
+
+    - name: Handle hooks
+      ansible.builtin.include_tasks: "hooks_handler.yml"
+
+    - name: Template backup scripts and files
+      ansible.builtin.template:
+        src: "srv/restic/{{ script.src }}.j2"
+        dest: "{{ current_backup_path }}/{{ script.dest }}"
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - {src: "cri_restic.sh", dest: "{{ current_backup.name }}.sh"}
+        - {src: "extra_vars", dest: "extra_vars"}
+        - {src: "hooks_vars", dest: "hooks_vars"}
+        - {src: "retry_handler.sh", dest: "retry_handler.sh"}
+      loop_control:
+        loop_var: script
+
+- name: Remove backup dir if needed
+  ansible.builtin.file:
+    path: "{{ current_backup_path }}"
+    state: absent
+  when: not current_backup.enabled
+
+- name: Add local schedule for backup
+  ansible.builtin.include_tasks: "backup_schedule.yml"
+
+- name: Add prune scripts
+  ansible.builtin.include_tasks: "prune.yml"

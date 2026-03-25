@@ -1,0 +1,28 @@
+---
+
+- name: Check if we want to install logrotate or not
+  ansible.builtin.set_fact:
+    logrotate_is_needed: "{{ backup_restic_logrotate
+                          or ((inventory_hostname == backup_restic_prune_host) and backup_restic_prune_logrotate) }}"
+
+- name: Install and add config for logrotate
+  when: logrotate_is_needed
+  block:
+    - name: Install logrotate
+      ansible.builtin.package:
+        name: "{{ pkg_logrotate_name }}"
+        state: "present"
+
+    - name: Add logrotate conf for restic
+      ansible.builtin.template:
+        src: "etc/logrotate.d/backup-restic.j2"
+        dest: "/etc/logrotate.d/backup-restic"
+        owner: root
+        group: root
+        mode: '0644'
+
+- name: Remove logrotate conf
+  ansible.builtin.file:
+    path: "/etc/logrotate.d/backup-restic"
+    state: absent
+  when: not logrotate_is_needed

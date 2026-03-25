@@ -1,0 +1,64 @@
+---
+# Restic backup configuration for terrarium
+# Infomaniak Swiss Backup (S3-compatible)
+
+# S3 backend defaults for Infomaniak
+backup_restic_default_s3_host: "s3.swiss-backup04.infomaniak.com"
+backup_restic_default_s3_connection_scheme: "https"
+backup_restic_default_s3_port: "443"
+backup_restic_default_aws_region: "us-east-1"
+
+# Use systemd timers
+backup_restic_default_schedule_type: "systemd-timers"
+
+# No external prune host -- local prune only
+backup_restic_default_disable_external_prune: true
+
+# Compression
+backup_restic_default_compression_level: "auto"
+
+backup_restic_list:
+  - name: infomaniak_backup
+    enabled: true
+    repo_password: "{{ vault_restic_repo_password }}"
+    hostname: "terrarium"
+    disable_prune: false
+    disable_external_prune: true
+    backend:
+      type: "s3"
+      s3_host: "s3.swiss-backup04.infomaniak.com"
+      s3_connection_scheme: "https"
+      s3_port: "443"
+      s3_access_key: "{{ vault_restic_s3_access_key }}"
+      s3_secret_key: "{{ vault_restic_s3_secret_key }}"
+      s3_bucket_name: "default"
+      aws_default_region: "us-east-1"
+    to_include:
+      - "/opt/local-path-provisioner"
+    to_exclude:
+      - "/opt/local-path-provisioner/monitoring"
+    # Daily backup at 03:00
+    backup_schedule: true
+    backup_schedule_type: "systemd-timers"
+    backup_systemd_timers:
+      hour: "3"
+      minute: "00"
+    # Weekly prune on Sundays at 12:00
+    prune_schedule: true
+    prune_schedule_type: "systemd-timers"
+    prune_systemd_timers:
+      hour: "12"
+      minute: "00"
+      weekday: "Sun"
+    forget_policy: "--keep-daily 7 --keep-weekly 8 --keep-monthly 12 --keep-yearly 2"
+    # Alerting
+    alerting:
+      discord:
+        enabled: true
+        webhook_url: "{{ vault_restic_discord_webhook_url }}"
+    alerting_on_success: true
+    prune_alerting:
+      discord:
+        enabled: true
+        webhook_url: "{{ vault_restic_discord_webhook_url }}"
+    prune_alerting_on_success: true

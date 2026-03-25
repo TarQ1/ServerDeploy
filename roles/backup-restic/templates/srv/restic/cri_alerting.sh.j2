@@ -1,0 +1,864 @@
+#!/usr/bin/env bash
+
+{{ ansible_managed | comment }}
+
+# Source helper functions
+source {{ backup_restic_path }}/scripts/cri_utils.sh
+
+BODY_MAX_LENGTH="${BODY_MAX_LENGTH:-{{ backup_restic_alerting_body_max_length }}}"
+
+cri_alerting_mail()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_mail_default_body }}"
+    local dest=""
+    local from="{{ backup_restic_alerting_mail_from }}"
+    local subject="{{ backup_restic_alerting_mail_default_subject }}"
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:d:f:s: mail_option; do
+        case "${mail_option}" in
+            b) body="${OPTARG}";;
+            d) dest="${OPTARG}";;
+            f) from="${OPTARG}";;
+            s) subject="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars dest
+
+    echoInfo "Sending alerting mail.."
+
+    {% if is_prune_host | d(false) %}
+    {% if backup_restic_prune_alerting_mail_command == "mail" -%}
+    # shellcheck disable=SC2086
+    mail -aFrom:"$from" -s "${subject}" ${dest} <<< "${body}"
+    {# Default to sendmail #}
+    {% else -%}
+    # shellcheck disable=SC2086
+    cat <<EOF | {{ backup_restic_prune_alerting_sendmail_path }} -t
+To: ${dest}
+From: ${from}
+Subject: ${subject}
+
+${body}
+EOF
+    {% endif %}
+    {% else %}
+    {% if backup_restic_alerting_mail_command == "mail" -%}
+    # shellcheck disable=SC2086
+    mail -aFrom:"$from" -s "${subject}" ${dest} <<< "${body}"
+    {# Default to sendmail #}
+    {% else -%}
+    # shellcheck disable=SC2086
+    cat <<EOF | {{ backup_restic_alerting_sendmail_path }} -t
+To: ${dest}
+From: ${from}
+Subject: ${subject}
+
+${body}
+EOF
+    {% endif -%}
+    {% endif -%}
+
+    local mail_rc="$?"
+
+    if [ "${mail_rc}" -ne 0 ]; then
+        echoErr "Mail alerting failed with:"
+        echoErr "rc: ${mail_rc}"
+    fi
+}
+
+cri_alerting_slack()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_slack_default_body }}"
+    local title="{{ backup_restic_alerting_slack_default_title }}"
+
+    local attachment_color_fail="{{ backup_restic_alerting_slack_color_fail }}"
+    local attachment_color_success="{{ backup_restic_alerting_slack_color_success }}"
+    local title_emote_fail="{{ backup_restic_alerting_slack_emoji_fail }}"
+    local title_emote_success="{{ backup_restic_alerting_slack_emoji_success }}"
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local attachment_color="${attachment_color_fail}"
+
+    # shellcheck disable=SC2016
+    local payload_template='{
+                                "channel": "%s",
+                                "link_names": "true",
+                                "text": "%s",
+                                "blocks":[
+                                    {
+                                        "type": "section",
+                                        "text": {
+                                                "type": "mrkdwn",
+                                                "text": "%s"
+                                        }
+                                    }
+                                ],
+                                "attachments": [
+                                    {
+                                        "color": "%s",
+                                        "blocks": [
+                                            {
+                                                "type": "section",
+                                                "text": {
+                                                    "type": "mrkdwn",
+                                                    "text": "```%s```"
+                                                }
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }'
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:c:r:t:w: slack_option; do
+        case "${slack_option}" in
+            b) body="${OPTARG}";;
+            c) channel="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            t) title="${OPTARG}";;
+            w) webhook_url="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars channel webhook_url
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        title="${title_emote_success} ${title}"
+        attachment_color="${attachment_color_success}"
+    else
+        title="${title_emote_fail} ${title}"
+    fi
+
+    echoInfo "Sending Slack message to ${channel}..."
+    local curl_out=""
+    # shellcheck disable=SC2059
+    curl_out="$(
+    curl -X POST \
+        -H 'Content-type: application/json' \
+        --silent \
+        --max-time {{ backup_restic_alerting_slack_curl_max_time }} \
+        --retry {{ backup_restic_alerting_slack_curl_retry }} \
+        --data \
+        "$(printf   "${payload_template}" \
+                    "${channel}" \
+                    "${title}" \
+                    "${title}" \
+                    "${attachment_color}" \
+                    "${body}" \
+        )" \
+        "${webhook_url}"
+    )"
+    local curl_rc="$?"
+
+    if [[ "${curl_rc}" -ne 0 || "${curl_out}" != "ok" ]]; then
+        echoErr "Slack alerting failed with:"
+        echoErr "rc: ${curl_rc}"
+        echoErr "output: ${curl_out}"
+    fi
+}
+
+cri_alerting_mattermost()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_mattermost_default_body }}"
+    local title="{{ backup_restic_alerting_mattermost_default_title }}"
+
+    local attachment_color_fail="{{ backup_restic_alerting_mattermost_color_fail }}"
+    local attachment_color_success="{{ backup_restic_alerting_mattermost_color_success }}"
+    local title_emote_fail="{{ backup_restic_alerting_mattermost_emoji_fail }}"
+    local title_emote_success="{{ backup_restic_alerting_mattermost_emoji_success }}"
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local attachment_color="${attachment_color_fail}"
+
+    # shellcheck disable=SC2016
+    local payload_template='{
+                                "channel": "%s",
+                                "text": "%s",
+                                "attachments": [
+                                    {
+                                        "fallback": "%s",
+                                        "color": "%s",
+                                        "title": "Restic logs",
+                                        "text": "%s"
+                                    }
+                                ]
+                            }'
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:c:r:t:w: mattermost_option; do
+        case "${mattermost_option}" in
+            b) body="${OPTARG}";;
+            c) channel="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            t) title="${OPTARG}";;
+            w) webhook_url="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars channel webhook_url
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        title="${title_emote_success} ${title}"
+        attachment_color="${attachment_color_success}"
+    else
+        title="${title_emote_fail} ${title}"
+    fi
+
+    echoInfo "Sending Mattermost message to ${channel}..."
+    local curl_out=""
+    # shellcheck disable=SC2059
+    curl_out="$(
+    curl -X POST \
+        -H 'Content-type: application/json' \
+        --silent \
+        --max-time {{ backup_restic_alerting_mattermost_curl_max_time }} \
+        --retry {{ backup_restic_alerting_mattermost_curl_retry }} \
+        --data \
+        "$(printf   "${payload_template}" \
+                    "${channel}" \
+                    "${title}" \
+                    "${title}" \
+                    "${attachment_color}" \
+                    "${body}" \
+        )" \
+        "${webhook_url}"
+    )"
+    local curl_rc="$?"
+
+    if [[ "${curl_rc}" -ne 0 || "${curl_out}" != "ok" ]]; then
+        echoErr "Mattermost alerting failed with:"
+        echoErr "rc: ${curl_rc}"
+        echoErr "output: ${curl_out}"
+    fi
+}
+
+cri_alerting_healthchecks_io ()
+{
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+
+    local target_url=""
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts r:u: healthchecks_io_option; do
+        case "${healthchecks_io_option}" in
+            r) operation_rc="${OPTARG}";;
+            u) target_url="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars target_url
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        echoInfo "Sending request to Healthchecks.io instance..."
+        local curl_out=""
+        curl_out="$(
+            curl --silent \
+                --max-time {{ backup_restic_alerting_healthchecks_io_curl_max_time }} \
+                --retry {{ backup_restic_alerting_healthchecks_io_curl_retry }} \
+                "${target_url}"
+        )"
+        local curl_rc="$?"
+
+        if [[ "${curl_rc}" -ne 0 || -n "${curl_out}" ]]; then
+            echoErr "Healthchecks.io alerting failed with:"
+            echoErr "rc: ${curl_rc}"
+            echoErr "output: ${curl_out}"
+        fi
+    else
+        echoWarn "Operation return code is not 0, no request sent to Healthchecks.io instance."
+    fi
+}
+
+cri_alerting_telegram ()
+{
+    # Defaults
+    local msg="{{ backup_restic_alerting_telegram_default_msg }}"
+
+    local msg_emoji_fail=$'{{ backup_restic_alerting_telegram_emoji_fail }}'
+    local msg_emoji_success=$'{{ backup_restic_alerting_telegram_emoji_success }}'
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+
+    local api_key=""
+    local chat_id=""
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts a:c:m:r: telegram_option; do
+        case "${telegram_option}" in
+            a) api_key="${OPTARG}";;
+            c) chat_id="${OPTARG}";;
+            m) msg="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars api_key chat_id msg
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        msg="${msg_emoji_success} ${msg}"
+    else
+        msg="${msg_emoji_fail} ${msg}"
+    fi
+
+    echoInfo "Sending Telegram message..."
+    local curl_out=""
+    # shellcheck disable=SC2059
+    curl_out="$(
+    curl -X POST \
+        --silent \
+        --max-time {{ backup_restic_alerting_telegram_curl_max_time }} \
+        --retry {{ backup_restic_alerting_telegram_curl_retry }} \
+        --data "chat_id=${chat_id}" \
+        --data "text=${msg}" \
+        "https://api.telegram.org/bot${api_key}/sendMessage"
+    )"
+    local curl_rc="$?"
+
+    # We should check this with `jq` but I want to keep the dependencies as low as possible
+    if [[ "${curl_rc}" -ne 0 || "${curl_out}" =~ {\"ok\":true ]]; then
+        echoErr "Telegram alerting failed with:"
+        echoErr "rc: ${curl_rc}"
+        echoErr "output: ${curl_out}"
+    fi
+}
+
+cri_alerting_rocketchat()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_rocketchat_default_body }}"
+    local title="{{ backup_restic_alerting_rocketchat_default_title }}"
+
+    local attachment_color_fail="{{ backup_restic_alerting_rocketchat_color_fail }}"
+    local attachment_color_success="{{ backup_restic_alerting_rocketchat_color_success }}"
+    local title_emote_fail="{{ backup_restic_alerting_rocketchat_emoji_fail }}"
+    local title_emote_success="{{ backup_restic_alerting_rocketchat_emoji_success }}"
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local attachment_color="${attachment_color_fail}"
+
+    # shellcheck disable=SC2016
+    local payload_template='{
+                                "text":"%s",
+                                "attachments": [
+                                    {
+                                        "title":"Restic logs",
+                                        "collapsed": true,
+                                        "color":"%s",
+                                        "fields": [
+                                            {
+                                                "short": false,
+                                                "value": "%s"
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }'
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:r:t:w: rocketchat_option; do
+        case "${rocketchat_option}" in
+            b) body="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            t) title="${OPTARG}";;
+            w) webhook_url="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars webhook_url
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        title="${title_emote_success} ${title}"
+        attachment_color="${attachment_color_success}"
+    else
+        title="${title_emote_fail} ${title}"
+    fi
+
+    echoInfo "Sending Rocketchat message..."
+    local curl_out=""
+    # shellcheck disable=SC2059
+    curl_out="$(
+    curl -X POST \
+        -H 'Content-type: application/json' \
+        --silent \
+        --max-time {{ backup_restic_alerting_rocketchat_curl_max_time }} \
+        --retry {{ backup_restic_alerting_rocketchat_curl_retry }} \
+        --data \
+        "$(printf   "${payload_template}" \
+                    "${title}" \
+                    "${attachment_color}" \
+                    "${body}" \
+        )" \
+        "${webhook_url}"
+    )"
+    local curl_rc="$?"
+
+    if [[ "${curl_rc}" -ne 0 || "${curl_out}" != "{\"success\":true}" ]]; then
+        echoErr "Rocketchat alerting failed with:"
+        echoErr "rc: ${curl_rc}"
+        echoErr "output: ${curl_out}"
+    fi
+}
+
+cri_alerting_discord()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_discord_default_body }}"
+    local title="{{ backup_restic_alerting_discord_default_title }}"
+
+    local attachment_color_fail="{{ backup_restic_alerting_discord_color_fail }}"
+    local attachment_color_success="{{ backup_restic_alerting_discord_color_success }}"
+    local title_emote_fail="{{ backup_restic_alerting_discord_emoji_fail }}"
+    local title_emote_success="{{ backup_restic_alerting_discord_emoji_success }}"
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local attachment_color="${attachment_color_fail}"
+
+    # shellcheck disable=SC2016
+    local payload_template='{
+                                "content":"%s",
+                                "embeds": [
+                                    {
+                                        "title":"Restic logs",
+                                        "description":"%s",
+                                        "color": "%s"
+                                    }
+                                ]
+                            }'
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:r:t:w: discord_option; do
+        case "${discord_option}" in
+            b) body="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            t) title="${OPTARG}";;
+            w) webhook_url="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars webhook_url
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        title="${title_emote_success} ${title}"
+        attachment_color="${attachment_color_success}"
+    else
+        title="${title_emote_fail} ${title}"
+    fi
+
+    echoInfo "Sending Discord message..."
+
+    local curl_out=""
+    # shellcheck disable=SC2059
+    curl_out="$(
+    curl -X POST \
+        -H 'Content-type: application/json' \
+        --silent \
+        --max-time {{ backup_restic_alerting_discord_curl_max_time }} \
+        --retry {{ backup_restic_alerting_discord_curl_retry }} \
+        --data \
+        "$(printf   "${payload_template}" \
+                    "${title}" \
+                    "${body}" \
+                    "${attachment_color}" \
+        )" \
+        "${webhook_url}"
+    )"
+    local curl_rc="$?"
+
+    if [[ "${curl_rc}" -ne 0 || -n "${curl_out}" ]]; then
+        echoErr "Discord alerting failed with:"
+        echoErr "rc: ${curl_rc}"
+        echoErr "output: ${curl_out}"
+    fi
+}
+
+cri_alerting_node()
+{
+    # Defaults
+    # Error state by default, user *must* give the state to the function
+    local operation_end_epoch=""
+    local operation_rc="1"
+    local operation_start_epoch=""
+    local operation_type=""
+    local node_dir=""
+    local node_user=""
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts d:e:r:s:t:u: node_option; do
+        case "${node_option}" in
+            d) node_dir="${OPTARG}";;
+            e) operation_end_epoch="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            s) operation_start_epoch="${OPTARG}";;
+            t) operation_type="${OPTARG}";;
+            u) node_user="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars operation_start_epoch operation_end_epoch operation_type node_dir
+
+    echoInfo "Generating Node exporter metrics file..."
+
+    if [ ! -d "${node_dir}" ]; then
+        echoInfo "Creating node dir: ${node_dir}..."
+        mkdir -p "${node_dir}"
+    fi
+
+    # We need to be in the destination directory to be able to create file with non root user
+    pushd "${node_dir}" > /dev/null
+
+    set -o pipefail
+    cat << EOF | su "${node_user}" -s "/bin/sh" -c 'sponge "node_restic_${BACKUP_NAME}_${HOSTNAME}.prom"'
+# HELP node_restic_job_exit_value Last exit code of restic job.
+# TYPE node_restic_job_exit_value gauge
+node_restic_job_exit_value{host="${HOSTNAME}", name="${BACKUP_NAME}",operation="${operation_type}"} ${operation_rc}
+# HELP node_restic_job_time_start Unix start job time
+# TYPE node_restic_job_time_start gauge
+node_restic_job_time_start{host="${HOSTNAME}", name="${BACKUP_NAME}",operation="${operation_type}"} ${operation_start_epoch}
+# HELP node_restic_job_time_end Unix end job time
+# TYPE node_restic_job_time_end gauge
+node_restic_job_time_end{host="${HOSTNAME}", name="${BACKUP_NAME}",operation="${operation_type}"} ${operation_end_epoch}
+EOF
+    local cat_rc="$?"
+    set +o pipefail
+
+    # Go back to the previous dir
+    popd > /dev/null
+
+    if [ "${cat_rc}" -ne 0 ]; then
+        echoErr "Node exporter - File exporter alerting failed with:"
+        echoErr "rc: ${cat_rc}"
+    fi
+}
+
+{% if backup_restic_desktop_host %}
+# shellcheck disable=SC2034
+# vars are effectively used in the `su` cmd
+cri_alerting_libnotify ()
+{
+    # Defaults
+    local body="{{ backup_restic_alerting_libnotify_default_body }}"
+    local title="{{ backup_restic_alerting_libnotify_default_title }}"
+
+    local body_emoji_fail=$'{{ backup_restic_alerting_libnotify_emoji_fail }}'
+    local body_emoji_success=$'{{ backup_restic_alerting_libnotify_emoji_success }}'
+
+    local category="{{ backup_restic_alerting_libnotify_category }}"
+
+    local icon_path="{{ backup_restic_path }}/assets/notification_icon.png"
+
+    local timeout_fail="{{ backup_restic_alerting_libnotify_timeout_fail }}"
+    local timeout_success="{{ backup_restic_alerting_libnotify_timeout_success }}"
+
+    local urgency_fail="{{ backup_restic_alerting_libnotify_urgency_fail }}"
+    local urgency_success="{{ backup_restic_alerting_libnotify_urgency_success }}"
+
+    local username=""
+    local userid=""
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local urgency="${urgency_fail}"
+    local timeout="${timeout_fail}"
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts b:i:r:u: libnotify_option; do
+        case "${libnotify_option}" in
+            b) body="${OPTARG}";;
+            i) icon_path="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            u) username="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars username
+
+    userid="$(id -u "${username}")"
+
+    if [ "${operation_rc}" -eq "0" ]; then
+        body="${body_emoji_success} ${body}"
+        urgency="${urgency_success}"
+        timeout="${timeout_success}"
+    else
+        body="${body_emoji_fail} ${body}"
+    fi
+
+    echoInfo "Sending Libnotify notification..."
+    # We need to export the vars for the su cmd
+    export CRI_ALERTING_LIBNOTIFY_BODY="${body}"
+    export CRI_ALERTING_LIBNOTIFY_CATEGORY="${category}"
+    export CRI_ALERTING_LIBNOTIFY_ICON_PATH="${icon_path}"
+    export CRI_ALERTING_LIBNOTIFY_TIMEOUT="${timeout}"
+    export CRI_ALERTING_LIBNOTIFY_TITLE="${title}"
+    export CRI_ALERTING_LIBNOTIFY_URGENCY="${urgency}"
+    export CRI_ALERTING_LIBNOTIFY_USERID="${userid}"
+    export CRI_ALERTING_LIBNOTIFY_USERNAME="${username}"
+
+    local cmd_out=""
+    # shellcheck disable=SC1004,SC2016
+    cmd_out="$(
+    su "${CRI_ALERTING_LIBNOTIFY_USERNAME}" -c 'DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"${CRI_ALERTING_LIBNOTIFY_USERID}"/bus \
+    notify-send -u "${CRI_ALERTING_LIBNOTIFY_URGENCY}" \
+                -t "${CRI_ALERTING_LIBNOTIFY_TIMEOUT}" \
+                -i "${CRI_ALERTING_LIBNOTIFY_ICON_PATH}" \
+                -c "${CRI_ALERTING_LIBNOTIFY_CATEGORY}" \
+                "${CRI_ALERTING_LIBNOTIFY_TITLE}" \
+                "${CRI_ALERTING_LIBNOTIFY_BODY}"' \
+    )"
+    local cmd_rc="$?"
+
+    if [ "${cmd_rc}" -ne 0 ]; then
+        echoErr "Libnotify notification failed with:"
+        echoErr "rc: ${cmd_rc}"
+        echoErr "output: ${cmd_out}"
+    fi
+}
+
+{% endif %}
+reduce_body_length()
+{
+    local input_string=""
+    local tmp_buffer=""
+    local nb_chars_max=""
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts i:l: body_length_option; do
+        case "${body_length_option}" in
+            i) input_string="${OPTARG}";;
+            l) nb_chars_max="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    check_vars input_string nb_chars_max
+
+    # We use nb_chars_max and the number of char we use to display a warning
+    local nb_chars_half="$(( (nb_chars_max - 300) / 2 ))"
+
+    tmp_buffer="$(head -c "${nb_chars_half}" <<< "${input_string}")"
+    if [ "$(tail -n 1 <<< "${tmp_buffer}")" != '\n' ]; then
+        # Last line of the first half is cut, removing it
+        printf "%s\n" "$(head -n -1 <<< "${tmp_buffer}")"
+    else
+        printf "%s" "${tmp_buffer}"
+    fi
+
+    echoWarn
+    echoWarn "###################################################"
+    echoWarn "Output log has been reduced, please check the local"
+    echoWarn "logs if needed"
+    echoWarn "###################################################"
+    echoWarn
+
+    tmp_buffer="$(tail -c "${nb_chars_half}" <<< "${input_string}")"
+    if [ "$(head -n 1 <<< "${tmp_buffer}")" != '\n' ]; then
+        # First line of the second half is cut, removing it
+        printf "%s" "$(tail -n +2 <<< "${tmp_buffer}")"
+    else
+        printf "%s" "${tmp_buffer}"
+    fi
+}
+
+cri_alerting_handler()
+{
+    local operation_end_epoch="0"
+    local operation_log_file=""
+    local operation_log=""
+    local operation_log_sanitized=""
+    local operation_start_epoch="0"
+    local operation_type="restic"
+
+    # Error state by default, user *must* give the state to the function
+    local operation_rc="1"
+    local output_verb="failed"
+    local operation_state="FAIL"
+
+    # Options parsing
+    ## Reset OPTIND
+    OPTIND=1
+    while getopts e:l:r:s:t: alert_option; do
+        case "${alert_option}" in
+            e) operation_end_epoch="${OPTARG}";;
+            l) operation_log_file="${OPTARG}";;
+            r) operation_rc="${OPTARG}";;
+            s) operation_start_epoch="${OPTARG}";;
+            t) operation_type="${OPTARG}";;
+            *) echoErr "Unrecognized option"; exit 1;;
+        esac
+    done
+
+    # Simple request or monitoring without message
+    # They always need to be triggered even when CRI_DISABLE_ALERTING_ON_SUCCESS is at true
+
+    # This should only be triggered for redundant jobs
+    if [[ "${operation_type}" =~ cri_(backup|prune) ]]; then
+        # Healthchecks.io
+        if [[ "${CRI_ALERTING_HEALTHCHECKS_IO}" =~ ^(y|Y) ]]; then
+            cri_alerting_healthchecks_io -r "${operation_rc}" \
+            -u "${CRI_ALERTING_HEALTHCHECKS_IO_URL}"
+        fi
+    fi
+
+    # Node exporter - File exporter
+    if [[ "${CRI_ALERTING_NODE}" =~ ^(y|Y) ]]; then
+        cri_alerting_node -r "${operation_rc}" -t "${operation_type}" \
+        -s "${operation_start_epoch}" -e "${operation_end_epoch}" \
+        -d "${CRI_ALERTING_NODE_DIR}" -u "${CRI_ALERTING_NODE_USER}"
+    fi
+
+    if [ "$operation_rc" -eq "0" ]; then
+        if [[ "${CRI_DISABLE_ALERTING_ON_SUCCESS}" =~ ^(y|Y) ]]; then
+            if [ "${CRI_BACKUP_HAS_FAILED_ONCE}" -eq "1" ]; then
+                echoInfo "Alerting will be send even if it's usually disabled on success because the script has failed at least once before."
+            elif [[ "${CRI_ALERTING_ON_SUCCESS_CANARY}" =~ ^(y|Y) ]]; then
+                echoInfo "Canary alerting is enabled, alerting will happen in ${CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT}% of the cases."
+                local random_percent="$((1 + RANDOM % 100))"
+                if [ "${random_percent}" -gt "${CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT}" ]; then
+                    echoInfo "Canary test has failed, alerting is will be skipped."
+                    return
+                else
+                    echoInfo "Canary test has succeeded, proceeding with alerting.."
+                fi
+            else
+                echoInfo "No alerting because your configuration disables alerting for successful restic operations."
+                return
+            fi
+        fi
+        output_verb="finished"
+        operation_state="OK"
+    fi
+
+    local subject="${operation_type} ${output_verb} for ${BACKUP_NAME} on ${HOSTNAME}"
+    local body="Operation ended with return code: ${operation_rc}. Please check the logs for more information."
+
+    # Retrieve the log's content and sanitize it for JSON
+    if [[ -n "${operation_log_file}" && -f "${operation_log_file}" ]]; then
+        operation_log="$(cat "${operation_log_file}")"
+
+        # Escape " to prevent potential JSON failures
+        operation_log_sanitized="$(sed 's/"/\\"/g' <<< "${operation_log}")"
+    fi
+
+    if [ "$(wc -c <<< "${operation_log_sanitized}")" -gt "${BODY_MAX_LENGTH}" ]; then
+        # Remove content from the middle of the body
+        operation_log_reduced="$(reduce_body_length -l "${BODY_MAX_LENGTH}" -i "${operation_log_sanitized}")"
+    fi
+
+    # Mail
+    if [[ "${CRI_ALERTING_MAIL}" =~ ^(y|Y) ]]; then
+        local mail_body="${body}"
+        local mail_subject="[{{ backup_restic_alerting_mail_tag }}][${operation_state}] ${subject}"
+
+        if [[ "${CRI_ALERTING_MAIL_INCLUDE_LOGS}" =~ ^(y|Y) ]] && [ -n "${operation_log}" ]; then
+            mail_body="${operation_log}"
+        fi
+        cri_alerting_mail -s "${mail_subject}" -b "${mail_body}" -d "${CRI_ALERTING_MAIL_DEST}"
+    fi
+
+    # Slack
+    if [[ "${CRI_ALERTING_SLACK}" =~ ^(y|Y) ]]; then
+        local slack_body="${body}"
+        local slack_title="${subject}"
+        if [[ "${CRI_ALERTING_SLACK_INCLUDE_LOGS}" =~ ^(y|Y) ]]; then
+            if [ -n "${operation_log_reduced}" ]; then
+                slack_body="${operation_log_reduced}"
+            elif [ -n "${operation_log_sanitized}" ]; then
+                slack_body="${operation_log_sanitized}"
+            fi
+        fi
+        cri_alerting_slack -t "${slack_title}" -r "${operation_rc}" -b "${slack_body}" \
+        -c "${CRI_ALERTING_SLACK_CHANNEL}" -w "${CRI_ALERTING_SLACK_WEBHOOK_URL}"
+    fi
+
+    # Mattermost
+    if [[ "${CRI_ALERTING_MATTERMOST}" =~ ^(y|Y) ]]; then
+        local mattermost_body="${body}"
+        local mattermost_title="${subject}"
+        if [[ "${CRI_ALERTING_MATTERMOST_INCLUDE_LOGS}" =~ ^(y|Y) ]] && [ -n "${operation_log_sanitized}" ]; then
+            mattermost_body="${operation_log_sanitized}"
+        fi
+        cri_alerting_mattermost -t "${mattermost_title}" -r "${operation_rc}" -b "${mattermost_body}" \
+        -c "${CRI_ALERTING_MATTERMOST_CHANNEL}" -w "${CRI_ALERTING_MATTERMOST_WEBHOOK_URL}"
+    fi
+
+    # Telegram
+    if [[ "${CRI_ALERTING_TELEGRAM}" =~ ^(y|Y) ]]; then
+        local telegram_msg="${subject}"
+        cri_alerting_telegram -r "${operation_rc}" -m "${telegram_msg}" \
+        -a "${CRI_ALERTING_TELEGRAM_API_KEY}" -c "${CRI_ALERTING_TELEGRAM_CHAT_ID}"
+    fi
+
+    # Rocket.Chat
+    if [[ "${CRI_ALERTING_ROCKETCHAT}" =~ ^(y|Y) ]]; then
+        local rocketchat_body="${body}"
+        local rocketchat_title="${subject}"
+        if [[ "${CRI_ALERTING_ROCKETCHAT_INCLUDE_LOGS}" =~ ^(y|Y) ]] && [ -n "${operation_log_sanitized}" ]; then
+            # Ugly hack to escape the linebreaks
+            rocketchat_body="$(sed ':a;N;$!ba;s/\n/\\n/g' <<< "${operation_log_sanitized}")"
+        fi
+        cri_alerting_rocketchat -t "${rocketchat_title}" -r "${operation_rc}" -b "${rocketchat_body}" \
+        -w "${CRI_ALERTING_ROCKETCHAT_WEBHOOK_URL}"
+    fi
+
+    # Discord
+    if [[ "${CRI_ALERTING_DISCORD}" =~ ^(y|Y) ]]; then
+        local discord_body="${body}"
+        local discord_title="${subject}"
+        if [[ "${CRI_ALERTING_DISCORD_INCLUDE_LOGS}" =~ ^(y|Y) ]] && [ -n "${operation_log_sanitized}" ]; then
+            # Ugly hack to escape the linebreaks
+            discord_body="$(sed ':a;N;$!ba;s/\n/\\n/g' <<< "${operation_log_sanitized}")"
+        fi
+        cri_alerting_discord -t "${discord_title}" -r "${operation_rc}" -b "${discord_body}" \
+        -w "${CRI_ALERTING_DISCORD_WEBHOOK_URL}"
+    fi
+{% if backup_restic_desktop_host %}
+
+    # Libnotify
+    if [[ "${CRI_ALERTING_LIBNOTIFY}" =~ ^(y|Y) ]]; then
+        local libnotify_body="${subject}"
+        cri_alerting_libnotify -r "${operation_rc}" -b "${libnotify_body}" \
+        -u "${CRI_ALERTING_LIBNOTIFY_USERNAME}"
+    fi
+{% endif %}
+}
+
+[[ "${0}" == "${BASH_SOURCE[0]}" ]] && cri_alerting_handler "${@}"

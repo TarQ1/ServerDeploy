@@ -1,0 +1,41 @@
+---
+
+- name: Add prune for backup
+  when:
+    - current_backup.enabled
+    - not (current_backup.disable_prune | d(backup_restic_default_disable_prune))
+  block:
+    - name: Create dir for current backup
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0600'
+      loop:
+        - "{{ current_backup_path }}"
+        - "{{ current_backup_path }}/logs"
+      delegate_to: "{{ backup_restic_prune_host }}"
+
+    - name: Template prune script
+      ansible.builtin.template:
+        src: "srv/restic/{{ item.src }}.j2"
+        dest: "{{ current_backup_path }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0700"
+      loop:
+        - {src: "cri_restic.sh", dest: "{{ current_backup.name }}.sh"}
+        - {src: "extra_vars", dest: "extra_vars"}
+        - {src: "retry_handler.sh", dest: "retry_handler.sh"}
+      vars:
+        is_prune_host: true
+      delegate_to: "{{ backup_restic_prune_host }}"
+
+- name: Remove prune for backup
+  ansible.builtin.file:
+    path: "{{ current_backup_path }}"
+    state: absent
+  delegate_to: "{{ backup_restic_prune_host }}"
+  when: not current_backup.enabled
+    or current_backup.disable_prune | d(backup_restic_default_disable_prune)

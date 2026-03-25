@@ -1,0 +1,114 @@
+# yamllint disable rule:line-length
+---
+
+- name: Load OS specific variables
+  ansible.builtin.include_vars: "{{ vars_file }}"
+  with_first_found:
+    - paths:
+        - "vars"
+      files:
+        - "{{ ansible_distribution }}-{{ ansible_distribution_version }}.yml"
+        - "{{ ansible_distribution }}-{{ ansible_distribution_major_version }}.yml"
+        - "{{ ansible_distribution }}.yml"
+        - "{{ ansible_os_family }}.yml"
+        - "{{ ansible_system }}.yml"
+      skip: true
+  loop_control:
+    loop_var: vars_file
+
+- name: Ensure srv dir is present
+  ansible.builtin.file:
+    path: "{{ backup_srv_path }}"
+    state: directory
+    owner: root
+    group: root
+  tags:
+    - skip_ansible_lint
+
+- name: Ensure needed dirs are present
+  ansible.builtin.file:
+    path: "{{ dir.path }}"
+    state: directory
+    owner: "{{ dir.owner | d('root') }}"
+    group: "{{ dir.group | d('root') }}"
+    mode: "{{ dir.mode | d('0600') }}"
+  loop:
+    - {path: "{{ backup_restic_path }}", mode: "0755"}
+    - {path: "{{ backup_restic_path }}/assets", mode: "0755"}
+    - {path: "{{ backup_restic_path }}/backups"}
+    - {path: "{{ backup_restic_path }}/bin"}
+    - {path: "{{ backup_restic_path }}/scripts"}
+  loop_control:
+    loop_var: dir
+
+- name: Install packages and dependencies
+  ansible.builtin.package:
+    name:
+      - "{{ pkg_bash_name }}"
+      - "{{ pkg_bc_name }}"
+      - "{{ pkg_bzip2_name }}"
+      - "{{ pkg_coreutils_name }}"
+      - "{{ pkg_curl_name }}"
+      - "{{ pkg_moreutils_name }}"
+    state: present
+
+- name: Install optionnal packages and dependencies
+  ansible.builtin.package:
+    name:
+      - "{{ pkg_fuse_name }}"
+    state: present
+  when: backup_restic_optional_dependencies
+
+- name: Install desktop dependencies if needed
+  ansible.builtin.include_tasks: "desktop_dependencies.yml"
+  when: backup_restic_desktop_host
+
+- name: Install logrotate and configure it
+  ansible.builtin.include_tasks: "logrotate.yml"
+
+- name: Get restic bin from Github releases
+  ansible.builtin.get_url:
+    # In order to easily update the restic version with renovatebot, we have to remove the `v` prefix manually in the download link
+    url: "https://github.com/restic/restic/releases/download/{{ backup_restic_version }}/restic_{{ backup_restic_version | replace('v', '') }}_linux_{{ backup_restic_host_arch }}.bz2"
+    dest: "{{ backup_restic_path }}/bin/restic_{{ backup_restic_version }}_{{ backup_restic_host_arch }}.bz2"
+    checksum: sha256:https://github.com/restic/restic/releases/download/{{ backup_restic_version }}/SHA256SUMS
+    owner: "root"
+    group: "root"
+    mode: "0644"
+
+- name: Unarchive restic release
+  ansible.builtin.command:
+    cmd: "bzip2 -k -d {{ backup_restic_path }}/bin/restic_{{ backup_restic_version }}_{{ backup_restic_host_arch }}.bz2"
+    creates: "{{ backup_restic_path }}/bin/restic_{{ backup_restic_version }}_{{ backup_restic_host_arch }}"
+
+- name: Grant exec perm to restic bin
+  ansible.builtin.file:
+    path: "{{ backup_restic_path }}/bin/restic_{{ backup_restic_version }}_{{ backup_restic_host_arch }}"
+    owner: root
+    group: root
+    mode: '0700'
+
+- name: Handle garbage collect for old restic binaries
+  ansible.builtin.include_tasks: "restic_bin_gc.yml"
+  when: backup_restic_nb_bin_to_keep > 0
+
+- name: Template restic wrapper scripts
+  ansible.builtin.template:
+    src: "srv/restic/{{ item }}.j2"
+    dest: "{{ backup_restic_path }}/scripts/{{ item }}"
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "cri_alerting.sh"
+    - "cri_restic_wrapper.sh"
+    - "cri_utils.sh"
+
+- name: Add backups scripts and files
+  ansible.builtin.include_tasks: "backup.yml"
+  loop: "{{ backup_restic_list }}"
+  loop_control:
+    loop_var: current_backup
+    label: "{{ current_backup.name }}"
+  when: current_backup.name in backup_restic_list_partial
+        or backup_restic_list_partial | length == 0

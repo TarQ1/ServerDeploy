@@ -1,0 +1,39 @@
+---
+
+- name: Register some facts to properly handle the hooks
+  ansible.builtin.set_fact:
+    current_backup_hooks: "{{ current_backup.backup_pre_hooks | d([])
+      + current_backup.backup_post_hooks | d([])
+      + current_backup.restore_pre_hooks | d([])
+      + current_backup.restore_post_hooks | d([])
+    }}"
+    current_backup_hooks_installed: []
+    # Creating a dict with all the hooks lists that will be used during the hooks templating phase
+    current_backup_hooks_dict:
+      CRI_BACKUP_PRE_HOOKS: "{{ current_backup.backup_pre_hooks | d([]) }}"
+      CRI_BACKUP_POST_HOOKS: "{{ current_backup.backup_post_hooks | d([]) }}"
+      CRI_BACKUP_RESTORE_PRE_HOOKS: "{{ current_backup.restore_pre_hooks | d([]) }}"
+      CRI_BACKUP_RESTORE_POST_HOOKS: "{{ current_backup.restore_post_hooks | d([]) }}"
+
+- name: Fail if the hooks dict doesn't contain the expected keys
+  ansible.builtin.assert:
+    that:
+      - current_hook.cmd | d([]) | length != 0
+      - current_hook.type | d("") == ""
+        or current_hook.type | d("") == "file"
+        or current_hook.type | d("") == "template"
+    fail_msg: |
+      {{ current_hook.name | d('Hook number ' + current_hook_index | string) }} doesn't have a valid configuration
+    success_msg: "{{ current_hook.name | d('Hook number ' + current_hook_index | string) }} has a valid configuration"
+  loop: "{{ current_backup_hooks }}"
+  loop_control:
+    loop_var: current_hook
+    index_var: current_hook_index
+
+- name: Copy or template the hooks
+  ansible.builtin.include_tasks: "hook.yml"
+  loop: "{{ current_backup_hooks }}"
+  loop_control:
+    loop_var: current_hook
+  when: current_hook.type | d("") == "file"
+        or current_hook.type | d("") == "template"

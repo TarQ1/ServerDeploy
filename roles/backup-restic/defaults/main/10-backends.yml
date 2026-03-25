@@ -1,0 +1,41 @@
+---
+
+# Backends
+available_backends:
+  - "s3"
+  - "aws"
+  - "minio"
+  - "wasabi"
+  - "b2"
+  - "backblaze"
+  - "azure"
+  - "gs"
+  - "gcs"
+  - "rclone"
+  - "rest"
+  - "restic_rest"
+  - "sftp"
+  - "local"
+  - "manual"
+
+## s3|aws|minio|wasabi
+backup_restic_default_s3_host: "s3.example.com"
+backup_restic_default_s3_connection_scheme: "https"
+backup_restic_default_s3_port: "443"
+# only for aws (optional)
+backup_restic_default_aws_region: ""
+
+## b2|backblaze
+backup_restic_default_b2_connection_scheme: ""
+backup_restic_default_b2_host: ""
+backup_restic_default_b2_port: ""
+
+## rest|restic_rest
+backup_restic_default_rest_connection_scheme: ""
+backup_restic_default_rest_host: ""
+backup_restic_default_rest_port: ""
+
+## sftp
+## Must be reachable via ssh without password
+backup_restic_default_sftp_host: ""
+backup_restic_default_sftp_port: ""

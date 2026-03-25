@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+{{ ansible_managed | comment }}
+
+# Vars
+export DATE_FORMAT="${DATE_FORMAT:-%D-%T}"
+
+# Output functions, simply add a timestamp before the output
+echoInfo()
+{
+    echo "[$(date +"${DATE_FORMAT}")][INFO] ${*}" ;
+}
+
+echoWarn()
+{
+    echo "[$(date +"${DATE_FORMAT}")][WARN] ${*}" ;
+}
+
+echoErr()
+{
+    >&2 echo "[$(date +"${DATE_FORMAT}")][ERR] ${*}" ;
+}
+
+check_vars()
+{
+    # $@: List of vars to check
+    local cur=""
+    local bad_vars=()
+    for var in "$@"; do
+        eval cur=\$"$var"
+        if [ -z "${cur}" ]; then
+            bad_vars+=("${var}")
+        fi
+    done
+
+    if [ "{{ '${#bad_vars[@]}' }}" -ne 0 ]; then
+        echoErr "Some vars are needed:"
+        for bad_var in "${bad_vars[@]}"; do
+            echoErr "   ${bad_var}"
+        done
+        exit 1
+    fi
+}

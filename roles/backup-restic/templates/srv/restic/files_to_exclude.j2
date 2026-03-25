@@ -1,0 +1,2 @@
+{{ ansible_managed | comment }}
+{{ current_backup.to_exclude | d([]) | join('\n') }}

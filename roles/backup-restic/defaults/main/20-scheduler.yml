@@ -1,0 +1,49 @@
+---
+
+## Scheduling
+backup_restic_default_schedule: true
+backup_restic_default_prune_schedule: "{{ backup_restic_default_schedule }}"
+
+## Scheduling type
+backup_restic_default_schedule_type: "cron"
+backup_restic_default_prune_schedule_type: "{{ backup_restic_default_schedule_type }}"
+
+## Cron
+backup_restic_default_cron_minute: '0'
+backup_restic_default_cron_hour: '3'
+backup_restic_default_cron_day: '*'
+backup_restic_default_cron_weekday: '*'
+backup_restic_default_cron_month: '*'
+
+backup_restic_default_prune_cron_minute: '0'
+backup_restic_default_prune_cron_hour: '12'
+backup_restic_default_prune_cron_day: '*'
+backup_restic_default_prune_cron_weekday: '*'
+backup_restic_default_prune_cron_month: '*'
+
+## Logrotate
+### Systemd-timers handle logs automatically
+backup_restic_logrotate: "{{ backup_restic_default_schedule_type == 'cron' }}"
+backup_restic_prune_logrotate: "{{ backup_restic_default_prune_schedule_type == 'cron' }}"
+backup_restic_log_retention_time: 12
+
+## Systemd-timers
+backup_restic_default_systemd_timers_hour: '3'
+backup_restic_default_systemd_timers_minute: '00'
+backup_restic_default_systemd_timers_second: '00'
+backup_restic_default_systemd_timers_day: '*'
+backup_restic_default_systemd_timers_month: '*'
+backup_restic_default_systemd_timers_year: '*'
+backup_restic_default_systemd_timers_weekday: ''
+# This exposes the `OnCalendar` field directly
+backup_restic_default_systemd_timers_custom: ""
+
+backup_restic_default_prune_systemd_timers_hour: '12'
+backup_restic_default_prune_systemd_timers_minute: '00'
+backup_restic_default_prune_systemd_timers_second: '00'
+backup_restic_default_prune_systemd_timers_day: '*'
+backup_restic_default_prune_systemd_timers_month: '*'
+backup_restic_default_prune_systemd_timers_year: '*'
+backup_restic_default_prune_systemd_timers_weekday: ''
+# This exposes the `OnCalendar` field directly
+backup_restic_default_prune_systemd_timers_custom: ""

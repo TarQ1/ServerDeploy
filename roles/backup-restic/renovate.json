@@ -1,0 +1,18 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>byh0ki-org/renovate-presets//renovate-presets"
+  ],
+  "docker-compose": {
+      "enabled": false
+  },
+  "regexManagers": [
+    {
+      "fileMatch": ["defaults/.+\\.ya?ml$"],
+      "matchStrings": [
+        "# renovate: repository=\"?(?<depName>[^\"]*?)\"?\n *backup_restic_version: \"?(?<currentValue>[^\" ]*)\"?"
+      ],
+      "datasourceTemplate": "github-releases"
+    }
+  ]
+}

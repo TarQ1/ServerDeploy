@@ -1,0 +1,79 @@
+---
+
+- name: Check if we want to enable backup scheduling
+  ansible.builtin.set_fact:
+    schedule_is_enabled: "{{ (current_backup.enabled | d(false) | bool)
+                            and current_backup.backup_schedule | d(backup_restic_default_schedule) }}"
+
+- name: Add or remove a cronjob entry for the backup
+  ansible.builtin.cron:
+    name: "{{ inventory_hostname }} - {{ current_backup.name }} backup"
+    state: "{{ schedule_is_enabled | ternary('present', 'absent') }}"
+    minute: "{{ current_backup.backup_cron.minute | d(backup_restic_default_cron_minute) }}"
+    hour: "{{ current_backup.backup_cron.hour | d(backup_restic_default_cron_hour) }}"
+    day: "{{ current_backup.backup_cron.day | d(backup_restic_default_cron_day) }}"
+    weekday: "{{ current_backup.backup_cron.weekday | d(backup_restic_default_cron_weekday) }}"
+    month: "{{ current_backup.backup_cron.month | d(backup_restic_default_cron_month) }}"
+    user: root
+    job: >
+      {{ current_backup_path }}/retry_handler.sh
+      {{ current_backup.backup_cmd | d(backup_restic_default_backup_cmd) }}
+      >> {{ current_backup_path }}/logs/restic_backup.log
+      2>&1
+  when: (current_backup.backup_schedule_type | d(backup_restic_default_schedule_type)) == "cron"
+
+- name: Add a systemd-timer for the backup
+  when:
+    - (current_backup.backup_schedule_type | d(backup_restic_default_schedule_type)) == "systemd-timers"
+    - schedule_is_enabled
+  block:
+    - name: Template systemd timer units for the backup
+      ansible.builtin.template:
+        src: "etc/systemd/system/restic-backup.{{ systemd_unit_type }}"
+        dest: "/etc/systemd/system/restic-backup-{{ current_backup.name }}.{{ systemd_unit_type }}"
+        owner: root
+        group: root
+        mode: 0644
+      loop:
+        - service
+        - timer
+      loop_control:
+        loop_var: systemd_unit_type
+
+    - name: Enable and start systemd timer for the backup
+      ansible.builtin.systemd:  # noqa no-handler
+        name: "restic-backup-{{ current_backup.name }}.timer"
+        daemon_reload: true
+        enabled: true
+        state: "started"
+
+- name: Remove the systemd-timer for the backup
+  when:
+    - (current_backup.backup_schedule_type | d(backup_restic_default_schedule_type)) == "systemd-timers"
+    - not schedule_is_enabled
+  block:
+    - name: Check if the systemd-timer already exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/restic-backup-{{ current_backup.name }}.timer"
+      register: systemd_timer_file
+
+    - name: Disable and stop the systemd-timer for the backup
+      ansible.builtin.systemd:  # noqa no-handler
+        name: "restic-backup-{{ current_backup.name }}.timer"
+        state: "stopped"
+        enabled: false
+      when: systemd_timer_file.stat.exists
+
+    - name: Remove systemd unit files for current backup
+      ansible.builtin.file:
+        path: "/etc/systemd/system/restic-backup-{{ current_backup.name }}.{{ systemd_unit_type }}"
+        state: absent
+      loop:
+        - service
+        - timer
+      loop_control:
+        loop_var: systemd_unit_type
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true

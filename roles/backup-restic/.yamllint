@@ -1,0 +1,10 @@
+---
+
+extends: default
+
+rules:
+  # 80 chars is not enough for paths
+  line-length:
+    max: 120
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true

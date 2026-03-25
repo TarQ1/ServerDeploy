@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+
+{{ ansible_managed | comment }}
+
+set -e -o pipefail -o errexit -o errtrace
+
+# Source extra vars
+source {{ current_backup_path }}/extra_vars
+
+# Source helper functions
+source {{ backup_restic_path }}/scripts/cri_utils.sh
+
+# Functions
+
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "No infos on the backend."
+}
+
+# Backend config
+{% if current_backup.backend.type | regex_search('s3|aws|minio|wasabi', ignorecase=True) %}
+## Endpoint conf
+export S3_CONNECTION_SCHEME="${S3_CONNECTION_SCHEME:-{{ current_backup.backend.s3_connection_scheme | d(backup_restic_default_s3_connection_scheme) }}}"
+export S3_HOST="${S3_HOST:-{{ current_backup.backend.s3_host | d(backup_restic_default_s3_host) }}}"
+export S3_PORT="${S3_PORT:-{{ current_backup.backend.s3_port | d(backup_restic_default_s3_port) }}}"
+
+{% if current_backup.backend.type == "aws" %}
+{% if current_backup.backend.aws_default_region | d(backup_restic_default_aws_region) | length > 0 %}
+export AWS_DEFAULT_REGION="{{ current_backup.backend.aws_default_region | d(backup_restic_default_aws_region) }}"
+{% endif %}
+{% endif %}
+
+## Auth conf
+{% if is_prune_host | d(false) %}
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-{{ current_backup.backend.s3_prune_access_key }}}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-{{ current_backup.backend.s3_prune_secret_key }}}"
+{% else %}
+export AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-{{ current_backup.backend.s3_access_key }}}"
+export AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-{{ current_backup.backend.s3_secret_key }}}"
+{% endif %}
+
+# Bucket conf
+export S3_BUCKET_NAME="${S3_BUCKET_NAME:-{{ current_backup.backend.s3_bucket_name }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-s3:${S3_CONNECTION_SCHEME}://${S3_HOST}:${S3_PORT}/${S3_BUCKET_NAME}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Host: ${S3_CONNECTION_SCHEME}://${S3_HOST}:${S3_PORT}"
+    echoInfo "  Bucket: ${S3_BUCKET_NAME}"
+}
+{% elif current_backup.backend.type | regex_search('b2|backblaze', ignorecase=True) %}
+## Endpoint conf
+export B2_CONNECTION_SCHEME="${B2_CONNECTION_SCHEME:-{{ current_backup.backend.b2_connection_scheme | d(backup_restic_default_b2_connection_scheme) }}}"
+export B2_HOST="${B2_HOST:-{{ current_backup.backend.b2_host | d(backup_restic_default_b2_host) }}}"
+export B2_PORT="${B2_PORT:-{{ current_backup.backend.b2_port | d(backup_restic_default_b2_port) }}}"
+
+## Auth conf
+{% if is_prune_host | d(false) %}
+export B2_ACCOUNT_ID="${B2_ACCOUNT_ID:-{{ current_backup.backend.b2_prune_account_id }}}"
+export B2_ACCOUNT_KEY="${B2_ACCOUNT_KEY:-{{ current_backup.backend.b2_prune_account_key }}}"
+{% else %}
+export B2_ACCOUNT_ID="${B2_ACCOUNT_ID:-{{ current_backup.backend.b2_account_id }}}"
+export B2_ACCOUNT_KEY="${B2_ACCOUNT_KEY:-{{ current_backup.backend.b2_account_key }}}"
+{% endif %}
+
+# Bucket conf
+export B2_BUCKET_NAME="${B2_BUCKET_NAME:-{{ current_backup.backend.b2_bucket_name }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-b2:${B2_BUCKET_NAME}:${B2_CONNECTION_SCHEME}://${B2_HOST}:${B2_PORT}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Host: ${B2_CONNECTION_SCHEME}://${B2_HOST}:${B2_PORT}"
+    echoInfo "  Bucket: ${B2_BUCKET_NAME}"
+}
+{% elif current_backup.backend.type | regex_search('azure', ignorecase=True) %}
+## Auth conf
+{% if is_prune_host | d(false) %}
+export AZURE_ACCOUNT_NAME="${AZURE_ACCOUNT_NAME:-{{ current_backup.backend.azure_prune_account_name }}}"
+export AZURE_ACCOUNT_KEY="${AZURE_ACCOUNT_KEY:-{{ current_backup.backend.azure_prune_account_key }}}"
+{% else %}
+export AZURE_ACCOUNT_NAME="${AZURE_ACCOUNT_NAME:-{{ current_backup.backend.azure_account_name }}}"
+export AZURE_ACCOUNT_KEY="${AZURE_ACCOUNT_KEY:-{{ current_backup.backend.azure_account_key }}}"
+{% endif %}
+
+# Bucket conf
+export AZURE_BUCKET_NAME="${AZURE_BUCKET_NAME:-{{ current_backup.backend.azure_bucket_name }}}"
+export AZURE_BUCKET_PATH="${AZURE_BUCKET_PATH:-{{ current_backup.backend.azure_bucket_path | d("/") }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-azure:${AZURE_BUCKET_NAME}:${AZURE_BUCKET_PATH}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Bucket: ${AZURE_BUCKET_NAME}"
+    echoInfo "  Bucket path: ${AZURE_BUCKET_PATH}"
+}
+{% elif current_backup.backend.type | regex_search('gs|gcs', ignorecase=True) %}
+## Auth conf
+{% if is_prune_host | d(false) %}
+{% if not current_backup.backend.use_token %}
+export GOOGLE_PROJECT_ID="${GOOGLE_PROJECT_ID:-{{ current_backup.backend.google_prune_project_id }}}"
+export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-{{ current_backup.backend.google_prune_application_credentials }}}"
+{% else %}
+export GOOGLE_ACCESS_TOKEN="${GOOGLE_ACCESS_TOKEN:-{{ current_backup.backend.google_prune_access_token }}}"
+{% endif %}
+{% else %}
+{% if not current_backup.backend.use_token %}
+export GOOGLE_PROJECT_ID="${GOOGLE_PROJECT_ID:-{{ current_backup.backend.google_project_id }}}"
+export GOOGLE_APPLICATION_CREDENTIALS="${GOOGLE_APPLICATION_CREDENTIALS:-{{ current_backup.backend.google_application_credentials }}}"
+{% else %}
+export GOOGLE_ACCESS_TOKEN="${GOOGLE_ACCESS_TOKEN:-{{ current_backup.backend.google_access_token }}}"
+{% endif %}
+{% endif %}
+
+# Bucket conf
+export GS_BUCKET_NAME="${GS_BUCKET_NAME:-{{ current_backup.backend.gs_bucket_name }}}"
+export GS_BUCKET_PATH="${GS_BUCKET_PATH:-{{ current_backup.backend.gs_bucket_path | d("/") }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-gs:${GS_BUCKET_NAME}:${GS_BUCKET_PATH}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Bucket: ${GS_BUCKET_NAME}"
+    echoInfo "  Bucket path: ${GS_BUCKET_PATH}"
+    {% if current_backup.backend.use_token %}
+    echoInfo "  Config path: ${GOOGLE_ACCESS_TOKEN}"
+    {% endif %}
+}
+{% elif current_backup.backend.type | regex_search('rclone', ignorecase=True) %}
+## Auth conf
+{% if is_prune_host | d(false) %}
+export RCLONE_CONF_NAME="${RCLONE_CONF_NAME:-{{ current_backup.backend.rclone_prune_conf_name }}}"
+{% else %}
+export RCLONE_CONF_NAME="${RCLONE_CONF_NAME:-{{ current_backup.backend.rclone_conf_name }}}"
+{% endif %}
+
+# Bucket conf
+export RCLONE_BUCKET_NAME="${RCLONE_BUCKET_NAME:-{{ current_backup.backend.rclone_bucket_name }}}"
+export RCLONE_BUCKET_PATH="${RCLONE_BUCKET_PATH:-{{ current_backup.backend.rclone_bucket_path | d("") }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-rclone:${RCLONE_CONF_NAME}:${RCLONE_BUCKET_NAME}${RCLONE_BUCKET_PATH}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Conf name: ${RCLONE_CONF_NAME}"
+    echoInfo "  Bucket: ${RCLONE_BUCKET_NAME}"
+    echoInfo "  Bucket path: ${RCLONE_BUCKET_PATH}"
+}
+{% elif current_backup.backend.type | regex_search('rest|restic_rest', ignorecase=True) %}
+## Endpoint conf
+export REST_CONNECTION_SCHEME="${REST_CONNECTION_SCHEME:-{{ current_backup.backend.rest_connection_scheme | d(backup_restic_default_rest_connection_scheme) }}}"
+export REST_HOST="${REST_HOST:-{{ current_backup.backend.rest_host | d(backup_restic_default_rest_host) }}}"
+export REST_PORT="${REST_PORT:-{{ current_backup.backend.rest_port | d(backup_restic_default_rest_port) }}}"
+
+## Auth conf
+export REST_USER="${REST_USER:-{{ current_backup.backend.rest_user }}}"
+export REST_PASSWORD="${REST_PASSWORD:-{{ current_backup.backend.rest_password }}}"
+
+# Bucket conf
+export REST_PATH="${REST_PATH:-{{ current_backup.backend.rest_path | d('/' + current_backup.backend.rest_user) }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-rest:${REST_CONNECTION_SCHEME}://${REST_USER}:${REST_PASSWORD}@${REST_HOST}:${REST_PORT}${REST_PATH}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Host: ${REST_CONNECTION_SCHEME}://{REST_HOST}:${REST_PORT}"
+    echoInfo "  Path: ${REST_PATH}"
+}
+{% elif current_backup.backend.type | regex_search('sftp', ignorecase=True) %}
+## Endpoint conf
+export SFTP_HOST="${SFTP_HOST:-{{ current_backup.backend.sftp_host | d(backup_restic_default_sftp_host) }}}"
+export SFTP_PORT="${SFTP_PORT:-{{ current_backup.backend.sftp_port | d(backup_restic_default_sftp_port) }}}"
+
+## Auth conf
+export SFTP_USER="${SFTP_USER:-{{ current_backup.backend.sftp_user }}}"
+
+# Bucket conf
+export SFTP_PATH="${SFTP_PATH:-{{ current_backup.backend.sftp_path }}}"
+
+## FIXME check if everything is not empty before declaring RESTIC_REPOSITORY
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+## We need the slash before the path https://restic.readthedocs.io/en/latest/030_preparing_a_new_repo.html#sftp
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-sftp:${SFTP_USER}@${SFTP_HOST}:${SFTP_PORT}/${SFTP_PATH}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Host: ${SFTP_HOST}:${SFTP_PORT}"
+    echoInfo "  Path: ${SFTP_PATH}"
+}
+{% elif current_backup.backend.type | regex_search('local', ignorecase=True) %}
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-{{ current_backup.backend.local_path }}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  Path: ${RESTIC_REPOSITORY}"
+}
+{% elif current_backup.backend.type | regex_search('manual', ignorecase=True) %}
+## RESTIC_REPOSITORY is the only thing used in the wrapper
+export RESTIC_REPOSITORY="${RESTIC_REPOSITORY:-{{ current_backup.backend.restic_repo }}}"
+
+# Redefine this func to add new fields
+backend_info()
+{
+    echoInfo "Backend:"
+    echoInfo "  Type: {{ current_backup.backend.type }}"
+    echoInfo "  No extra info displayed here because of secrets."
+}
+{% endif %}
+
+# Vars
+export HOSTNAME="{{ current_backup.hostname | d(backup_restic_hostname) }}"
+
+## Backup name
+export BACKUP_NAME="{{ current_backup.name }}"
+
+export RESTORE_PATH="${RESTORE_PATH:-{{ current_backup.restore_path | d(backup_restic_default_restore_path) }}}"
+
+export CRI_BACKUP_PATH="{{ current_backup_path }}"
+
+## Restic password, used to encrypt repository content
+export RESTIC_PASSWORD="${RESTIC_PASSWORD:-{{ current_backup.repo_password }}}"
+{% if current_backup.compression_level | d(backup_restic_default_compression_level) %}
+
+## Restic compression level
+export RESTIC_COMPRESSION="${RESTIC_COMPRESSION:-{{ current_backup.compression_level | d(backup_restic_default_compression_level) }}}"
+{% endif %}
+
+## Restic forget policy, used to tell restic which snapshot it should keep
+export BACKUP_FORGET_POLICY="${BACKUP_FORGET_POLICY:-{{ current_backup.forget_policy | d(backup_restic_default_forget_policy) }}}"
+
+## Restic integrity checks settings
+export CRI_BACKUP_DATA_INTEGRITY_CHECK="${CRI_BACKUP_DATA_INTEGRITY_CHECK:-{{ current_backup.backup_data_integrity_check | d(backup_restic_default_backup_data_integrity_check) }}}"
+export CRI_PRUNE_DATA_INTEGRITY_CHECK="${CRI_PRUNE_DATA_INTEGRITY_CHECK:-{{ current_backup.prune_data_integrity_check | d(backup_restic_default_prune_data_integrity_check) }}}"
+
+# Main functions
+cri_restic()
+{
+    local start_time=${SECONDS}
+
+    echoInfo "Beggining of the operation"
+    echoInfo "Hostname: ${HOSTNAME}"
+    echoInfo "Backup name: ${BACKUP_NAME}"
+    backend_info
+
+    # Restic wrapper call
+    "{{ backup_restic_path }}/scripts/cri_restic_wrapper.sh" "$@"
+
+    local total_duration_formated
+    total_duration_formated="$(TZ=UTC printf '%(%H:%M:%S)T' "$(( SECONDS - start_time ))")"
+
+    echoInfo "Total duration: ${total_duration_formated}"
+}
+
+[[ "$0" == "${BASH_SOURCE[0]}" ]] && cri_restic "$@"

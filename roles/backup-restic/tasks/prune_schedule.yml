@@ -1,0 +1,90 @@
+---
+
+- name: Check if we want to enable prune scheduling
+  ansible.builtin.set_fact:
+    prune_schedule_is_enabled: "{{ (current_backup.enabled | d(false) | bool)
+                                and not (current_backup.disable_prune | d(backup_restic_default_disable_prune))
+                                and current_backup.prune_schedule | d(backup_restic_default_prune_schedule) }}"
+
+- name: Add or remove a cronjob entry for the backup pruning
+  ansible.builtin.cron:
+    name: "{{ inventory_hostname }} - {{ current_backup.name }} prune"
+    state: "{{ prune_schedule_is_enabled | ternary('present', 'absent') }}"
+    minute: "{{ current_backup.prune_cron.minute | d(backup_restic_default_prune_cron_minute) }}"
+    hour: "{{ current_backup.prune_cron.hour | d(backup_restic_default_prune_cron_hour) }}"
+    day: "{{ current_backup.prune_cron.day | d(backup_restic_default_prune_cron_day) }}"
+    weekday: "{{ current_backup.prune_cron.weekday | d(backup_restic_default_prune_cron_weekday) }}"
+    month: "{{ current_backup.prune_cron.month | d(backup_restic_default_prune_cron_month) }}"
+    user: root
+    job: >
+      {{ current_backup_path }}/retry_handler.sh
+      {{ current_backup.prune_cmd | d(backup_restic_default_prune_cmd) }}
+      >> {{ current_backup_path }}/logs/restic_prune.log
+      2>&1
+  when: (current_backup.prune_schedule_type | d(backup_restic_default_prune_schedule_type)) == "cron"
+  delegate_to: "{{ backup_restic_prune_host if prune_external else omit }}"
+
+- name: Add a systemd timer for the backup pruning
+  when:
+    - (current_backup.prune_schedule_type | d(backup_restic_default_prune_schedule_type)) == "systemd-timers"
+    - prune_schedule_is_enabled
+  # Temporary switching to a fix using inventory_hostname following an issue
+  # with delegate_to and omit in a block context
+  # See https://github.com/ansible/ansible/issues/79752
+  delegate_to: "{{ backup_restic_prune_host if prune_external else inventory_hostname }}"
+  block:
+    - name: Template systemd unit files for the prune job
+      ansible.builtin.template:
+        src: "etc/systemd/system/restic-prune.{{ systemd_unit_type }}"
+        # yamllint disable rule:line-length
+        dest: "/etc/systemd/system/restic-prune-{{ inventory_hostname }}-{{ current_backup.name }}.{{ systemd_unit_type }}"
+        owner: root
+        group: root
+        mode: 0644
+      loop:
+        - service
+        - timer
+      loop_control:
+        loop_var: systemd_unit_type
+
+    - name: Enable and start systemd timer for the prune job
+      ansible.builtin.systemd:  # noqa no-handler
+        name: "restic-prune-{{ inventory_hostname }}-{{ current_backup.name }}.timer"
+        daemon_reload: true
+        enabled: true
+        state: "started"
+
+- name: Remove the systemd-timer for the backup pruning
+  when:
+    - (current_backup.prune_schedule_type | d(backup_restic_default_prune_schedule_type)) == "systemd-timers"
+    - not prune_schedule_is_enabled
+  # Temporary switching to a fix using inventory_hostname following an issue
+  # with delegate_to and omit in a block context
+  # See https://github.com/ansible/ansible/issues/79752
+  delegate_to: "{{ backup_restic_prune_host if prune_external else inventory_hostname }}"
+  block:
+    - name: Check if the systemd-timer already exists
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/restic-prune-{{ current_backup.name }}.timer"
+      register: prune_systemd_timer_file
+
+    - name: Disable and stop the systemd-timer for the current prune job
+      ansible.builtin.systemd:  # noqa no-handler
+        name: "restic-prune-{{ current_backup.name }}.timer"
+        state: "stopped"
+        enabled: false
+      when: prune_systemd_timer_file.stat.exists
+
+    - name: Remove systemd unit files for current prune job
+      ansible.builtin.file:
+        path: "/etc/systemd/system/restic-prune-{{ current_backup.name }}.{{ systemd_unit_type }}"
+        state: absent
+      loop:
+        - service
+        - timer
+      loop_control:
+        loop_var: systemd_unit_type
+
+    - name: Reload systend daemon
+      ansible.builtin.systemd:
+        daemon_reload: true

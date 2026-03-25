@@ -1,0 +1,17 @@
+---
+
+include:
+  - project: 'byh0ki-org/pipelines-templates/yaml'
+    file: '/yamllint_tasks.yml'
+    ref: "1.1.0"
+
+stages:
+  - lint
+
+yaml:
+  stage: lint
+  extends: .gitlab_pipelines_yaml_lint_task
+
+ansible:
+  stage: lint
+  extends: .gitlab_pipelines_ansible_lint_task

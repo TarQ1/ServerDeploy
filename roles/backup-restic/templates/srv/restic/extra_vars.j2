@@ -1,0 +1,11 @@
+{{ ansible_managed | comment }}
+
+{% if is_prune_host | d(false) %}
+{% for extra_var in current_backup.extra_vars_prune | d(backup_restic_default_extra_vars_prune) %}
+{% if extra_var.export | d(backup_restic_default_extra_vars_prune_export) %}export {% endif %}{{ extra_var.name }}="{{ extra_var.value }}"
+{% endfor %}
+{% else %}
+{% for extra_var in current_backup.extra_vars | d(backup_restic_default_extra_vars) %}
+{% if extra_var.export | d(backup_restic_default_extra_vars_export) %}export {% endif %}{{ extra_var.name }}="{{ extra_var.value }}"
+{% endfor %}
+{% endif %}

@@ -1,0 +1,316 @@
+#!/usr/bin/env bash
+
+{{ ansible_managed | comment }}
+
+set -eo pipefail -o errexit -o errtrace
+
+# Get helper functions
+source {{ backup_restic_path }}/scripts/cri_utils.sh
+
+# Functions
+
+usage()
+{
+    echo -e "This script is a wrapper on restic. It sets usefuls env var before
+running restic."
+
+    echo -e "$(basename "$0") [-h|--help] cri_backup|cri_restore|cri_prune|cri_integrity_check|restic|<restic cmd> <extra args>"
+    echo -e "           [-h|--help] display this help message"
+    echo -e "           cri_backup|cri_restore|cri_prune|cri_integrity_check, \
+call the cri functions"
+    echo -e "           restic, call the proper restic binary with your args"
+    exit "${1:-1}"
+}
+
+usage_backup()
+{
+    echo -e "$(basename "$0") cri_backup [-h|--help] <extra args>"
+    echo -e "           [-h|--help] display this help message"
+    echo -e "This function expects 2 files at {{ backup_restic_path }}/${includes_filename} \
+and {{ backup_restic_path }}/${excludes_filename} containing the files (or paths) to \
+backup (or exclude), one by line"
+    exit "${1:-1}"
+}
+
+usage_prune()
+{
+    echo -e "$(basename "$0") cri_prune [-h|--help] backup_forget_policy"
+    echo -e "           [-h|--help] display this help message"
+    echo -e "You can specify a policy as the first arg of this function, otherwise \
+the default will be used: \"$DEFAULT_FORGET_POLICY\""
+    exit "${1:-1}"
+}
+
+usage_restore()
+{
+    echo -e "$(basename "$0") cri_restore [-h|--help] <snapshot id> <extra args>"
+    echo -e "           [-h|--help] display this help message"
+    exit "${1:-1}"
+}
+
+get_cri_hooks()
+{
+    if [ -r "${CRI_BACKUP_PATH}/hooks_vars" ]; then
+        echoInfo "Sourcing hooks file \"${CRI_BACKUP_PATH}/hooks_vars\"..."
+        source "${CRI_BACKUP_PATH}/hooks_vars"
+    else
+        echoInfo "No hooks file detected at \"${CRI_BACKUP_PATH}/hooks_vars\", defaulting to empty hooks..."
+    fi
+}
+
+cri_hooks()
+{
+    # $1: type of hook: pre|post
+    # $2: array of array of hooks to run
+
+    local hooks_type="$1"; shift
+    local hooks=( "$@" )
+
+    local nb_hooks="{{ "${#hooks[@]}" }}"
+
+    if [ "${nb_hooks}" -eq "0" ]; then
+        echoInfo "No ${hooks_type}-hook."
+    else
+        local hook_start_time="0"
+        local current_hook_nb="1"
+        echoInfo "Running ${hooks_type}-hooks.."
+        echoInfo "Number of ${hooks_type}-hooks: ${nb_hooks}"
+
+        for hook in "${hooks[@]}"; do
+            hook_start_time="${SECONDS}"
+
+            current_hook="${hook}"
+            echoInfo "${hooks_type^}-hook ${current_hook_nb}/${nb_hooks}:"
+            "${current_hook}"
+
+            echoInfo "$(TZ=UTC printf '%s ran in %(%H:%M:%S)T\n' "${hooks_type^}-hook ${current_hook_nb}" "$(( SECONDS - hook_start_time ))")"
+
+            (( current_hook_nb = current_hook_nb + 1 ))
+        done
+    fi
+}
+
+cri_pre_hooks()
+{
+    # $@: hooks array to run
+    cri_hooks "pre" "$@"
+}
+
+cri_post_hooks()
+{
+    # $@: hooks array to run
+    cri_hooks "post" "$@"
+}
+
+# Replace restic with restic binary path
+restic()
+{
+    {{ backup_restic_path }}/bin/restic_{{ backup_restic_version }}_{{ backup_restic_host_arch }} "$@"
+}
+
+cri_integrity_check()
+{
+    # $1: Setting to determine if restic will only check the repo or the repo and the data
+    # Available values:
+    # - a number between 0 and 100 (with a '%' at the end) that will be the pourcentage of data to check
+    # - a fraction that represent the portion to check (2/5 will check the second data portion)
+    # - 'no-data-read' or 'simple' to perform a simple check on the repo (same as 0%)
+    # - 'all-data' to perform full check on the repo (same as 100%)
+    # - an empty vars means no check
+
+    local integrity_check_setting="${1}"
+
+    # No check if nothing is given to the function => easy way to disable the check
+    if [ -z "${integrity_check_setting}" ]; then
+        echoInfo "No restic checks to run."
+    else
+        echoInfo "Running restic check on the repo to ensure that everything is alright."
+        case "${integrity_check_setting}" in
+            100%|all-data)
+                echoInfo "Checking all the data in the restic repository.."
+                restic check --read-data
+                ;;
+            0%|no-data-read|simple)
+                restic check
+                ;;
+            *)
+                # Can either be a percentage or a fraction to specify the subset of
+                # data to check
+                echoInfo "Checking the data with the setting: ${integrity_check_setting}.."
+                restic check --read-data-subset="${integrity_check_setting}"
+                ;;
+        esac
+    fi
+}
+
+cri_backup()
+{
+    case "${1}" in
+        -h|--help)
+            usage_backup 0
+            ;;
+    esac
+
+    includes_filename="files_to_include"
+    excludes_filename="files_to_exclude"
+
+    if [ ! -r "${CRI_BACKUP_PATH}/${includes_filename}" ]; then
+        echoErr 'Backup include file not found.'
+        usage_backup 1
+    fi
+
+    if [ ! -r "${CRI_BACKUP_PATH}/${excludes_filename}" ]; then
+        echoErr "Backup exclude file not found."
+        usage_backup 1
+    fi
+
+    get_cri_hooks
+
+    local start_time="${SECONDS}"
+
+    # Oh wait it's illegal...
+    output_prefix="                            "
+    echoInfo "Starting backup"
+    echoInfo "Restic version: $(restic version)"
+    echoInfo "Files to include:
+$(grep --color=never -v '^ *#' "${CRI_BACKUP_PATH}/${includes_filename}" | sed -e "s/^/$output_prefix/")"
+    echoInfo "Files to exclude:
+$(grep --color=never -v '^ *#' "${CRI_BACKUP_PATH}/${excludes_filename}" | sed -e "s/^/$output_prefix/")"
+    echoInfo "-----------------------"
+
+    # Init restic repo if needed
+    # NB: `snapshots` cmd will fail not only if the repo is not initialized
+    restic_wrong_pass="wrong password or no key found"
+    restic_already_locked="unable to create lock in backend: repository is already locked exclusively"
+    if ! restic_snapshot_output="$(restic snapshots 2>&1)"; then
+        if grep -q "${restic_wrong_pass}" <<< "${restic_snapshot_output}"; then
+            echoErr "Wrong restic repo password."
+            exit 1
+        elif grep -q "${restic_already_locked}" <<< "${restic_snapshot_output}"; then
+            echoErr "Can't lock restic repo, repo is already locked"
+            exit 2
+        else
+            echoInfo "Restic repo is not initialized, initialize..."
+            restic init
+        fi
+    fi
+
+    cri_pre_hooks "${CRI_BACKUP_PRE_HOOKS[@]}"
+
+    # Actual backup
+    restic backup -H "${HOSTNAME}" --files-from "${CRI_BACKUP_PATH}/${includes_filename}" \
+    --exclude-file "${CRI_BACKUP_PATH}/${excludes_filename}" \
+    "$@"
+
+    cri_post_hooks "${CRI_BACKUP_POST_HOOKS[@]}"
+
+    cri_integrity_check "${CRI_BACKUP_DATA_INTEGRITY_CHECK}"
+
+    echoInfo "$(TZ=UTC printf 'Backup finished in %(%H:%M:%S)T\n' "$(( SECONDS - start_time ))")"
+}
+
+cri_prune()
+{
+    DEFAULT_FORGET_POLICY="{{ backup_restic_default_forget_policy }}"
+    export BACKUP_FORGET_POLICY="${BACKUP_FORGET_POLICY:-"$DEFAULT_FORGET_POLICY"}"
+
+    case "${1}" in
+        -h|--help)
+            usage_prune 0
+            ;;
+        "") # Ok it's ugly but it gets the job done
+            ;;
+        *)
+            BACKUP_FORGET_POLICY="$1"
+            shift 1
+            ;;
+    esac
+
+    local start_time="${SECONDS}"
+
+    echoInfo "Starting prune"
+    echoInfo "Restic version: $(restic version)"
+    echoInfo "Prune policy: ${BACKUP_FORGET_POLICY}"
+
+    # shellcheck disable=SC2086
+    restic forget --host "$HOSTNAME" ${BACKUP_FORGET_POLICY} --prune "$@"
+
+    cri_integrity_check "${CRI_PRUNE_DATA_INTEGRITY_CHECK}"
+
+    echoInfo "$(TZ=UTC printf 'Pruning finished in %(%H:%M:%S)T\n' "$(( SECONDS - start_time ))")"
+}
+
+cri_restore()
+{
+    case "${1}" in
+        -h|--help)
+            usage_restore 0
+            ;;
+    esac
+
+    RESTORE_PATH="${RESTORE_PATH-:/restore}"
+
+    read -r -p "This operation will restore your files to ${RESTORE_PATH}, do \
+you want to procede ? (y/N): " user_ack
+
+    case $user_ack in
+        [Yy])
+            ;;
+        *)
+            echo
+            echoWarn "Restauration cancelled by user."
+            exit 0
+            ;;
+    esac
+
+    mkdir -p "${RESTORE_PATH}"
+
+    get_cri_hooks
+
+    start_time=${SECONDS}
+
+    echo
+    echoInfo "Starting restoration"
+    echoInfo "Restic version: $(restic version)"
+    echoInfo "Restoration destination: ${RESTORE_PATH}"
+
+    cri_pre_hooks "${CRI_RESTORE_PRE_HOOKS[@]}"
+
+    #
+    # TODO ADD A WAY TO RESTORE ONLY A PATH IN THE SNAPSHOT
+    # Hint: --path
+    restic restore --host "${HOSTNAME}" --target "${RESTORE_PATH}" "$@"
+
+    cri_post_hooks "${CRI_RESTORE_POST_HOOKS[@]}"
+
+    echoInfo "$(TZ=UTC printf 'Restoration finished in %(%H:%M:%S)T\n' "$(( SECONDS - start_time ))")"
+}
+
+# Script
+
+main()
+{
+    ## Beginning of the script
+    case "${1}" in
+        -h|--help)
+            usage 0
+            ;;
+        cri_backup|cri_restore|cri_prune)
+            # Check if the proper env vars were given to the script
+            check_vars RESTIC_REPOSITORY RESTIC_PASSWORD
+
+            cri_func="${1}"
+            shift 1 # To remove `cri_*` from the args
+            "${cri_func}" "${@}"
+            ;;
+        restic)
+            shift 1 # To remove `restic` from the args
+            restic "${@}"
+            ;;
+        *)
+            restic "${@}"
+            ;;
+    esac
+}
+
+[[ "${0}" == "${BASH_SOURCE[0]}" ]] && main "${@}"

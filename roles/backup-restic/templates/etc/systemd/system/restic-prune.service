@@ -1,0 +1,5 @@
+[Unit]
+Description={{ inventory_hostname }} - {{ current_backup.name }} prune
+
+[Service]
+ExecStart={{ current_backup_path }}/retry_handler.sh {{ current_backup.prune_cmd | d(backup_restic_default_prune_cmd) }}

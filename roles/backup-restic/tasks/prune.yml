@@ -1,0 +1,17 @@
+---
+
+# roles/backup-restic/tasks/prune.yml
+
+- name: Check if we want local or external prune
+  ansible.builtin.set_fact:
+    # yamllint disable rule:line-length
+    prune_external: "{{ not (current_backup.disable_external_prune | d(backup_restic_default_disable_external_prune) | bool)
+                     and current_backup.backend.type not in backup_restic_default_no_external_prune }}"
+
+- name: Handle external prune requirements
+  ansible.builtin.include_tasks: "prune_external.yml"
+  when: prune_external
+
+# Schedule
+- name: Add schedule for current backup's prune jobs
+  ansible.builtin.include_tasks: "prune_schedule.yml"

@@ -1,0 +1,9 @@
+{{ backup_restic_path }}/backups/*/logs/restic*.log {
+    monthly
+    missingok
+    rotate {{ backup_restic_log_retention_time }}
+    compress
+    delaycompress
+    notifempty
+    nocreate
+}

@@ -1,0 +1,37 @@
+---
+
+- name: Get the list of restic binaries
+  ansible.builtin.find:
+    paths: "{{ backup_restic_path }}/bin/"
+    use_regex: true
+    patterns:
+      - "^restic_.*_{{ backup_restic_host_arch }}$"
+  register: restic_bin_found
+
+- name: Delete the old binaries if there are too many
+  when: restic_bin_found.matched > backup_restic_nb_bin_to_keep
+  block:
+    - name: Register the list of sorted binaries paths
+      ansible.builtin.set_fact:
+        # yamllint disable-line rule:line-length
+        restic_bin_paths: "{{ (restic_bin_found.files | map(attribute='path') | flatten | community.general.version_sort) }}"
+
+    - name: Register the list of binaries paths to delete
+      ansible.builtin.set_fact:
+        # Keep only the "restic_bin_found.matched - backup_restic_nb_bin_to_keep" first elements
+        # ie, the oldest binaries as the list is sorted using ascending order
+        restic_bin_paths_to_delete: "{{ restic_bin_paths[: restic_bin_found.matched - backup_restic_nb_bin_to_keep] }}"
+
+    - name: Register the list of binaries and archives paths to delete
+      ansible.builtin.set_fact:
+        # Dynamically compute the archives path and add them to the list to delete
+        # yamllint disable-line rule:line-length
+        restic_bin_and_archive_paths_to_delete: "{{ (restic_bin_paths_to_delete | product(['', '.bz2']) | map('join', '')) }}"
+
+    - name: Delete the extra binaries and archives
+      ansible.builtin.file:
+        path: "{{ path }}"
+        state: absent
+      loop: "{{ restic_bin_and_archive_paths_to_delete }}"
+      loop_control:
+        loop_var: "path"

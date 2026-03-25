@@ -3,3 +3,4 @@
 - import_playbook: playbooks/disks.yml
 - import_playbook: playbooks/security.yml
 - import_playbook: playbooks/dns.yml
+- import_playbook: playbooks/backup.yml

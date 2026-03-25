@@ -1,0 +1,25 @@
+{{ ansible_managed | comment }}
+
+{# Generate a bash function for each hook that will contain the hook command #}
+{% for key, current_hooks_list in current_backup_hooks_dict.items() | d({}) %}
+# {{ key }}
+{% for current_hook in current_hooks_list %}
+{{ key }}_{{ loop.index }}()
+{
+  {# We need to prefix the templates and files with the path where they are #}
+  {# copied by Ansible so that we don't need to worry about how to execute it #}
+  {% if current_hook.type | d() %}
+  "{{ ([ current_backup_path + '/hooks/' + current_hook.cmd[0]] + current_hook.cmd[1:]) | join('" "') }}"
+  {%- else %}
+  "{{ current_hook.cmd | join('" "') }}"
+  {%- endif +%}
+}
+
+{% endfor %}
+{# This bash array will contain a reference to all the needed hooks for a given backup #}
+{{ key }}=( {% for hook_nb in range(current_hooks_list | d([]) | length) %}"{{ key }}_{{ hook_nb + 1 }}" {% endfor %})
+{% if not loop.last %}
+
+
+{% endif %}
+{% endfor %}

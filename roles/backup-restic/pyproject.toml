@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "cri-template"
+version = "1.0.0"
+description = ""
+authors = ["CRI - EPITA <cri@cri.epita.fr>"]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+ansible = "<6.0"
+hvac = "*"
+jmespath = "*"
+
+[tool.poetry.dev-dependencies]
+ansible-lint = "*"
+yamllint = "*"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

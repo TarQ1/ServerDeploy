@@ -1,0 +1,14 @@
+---
+
+- name: Install libnotify
+  ansible.builtin.package:
+    name: "{{ pkg_libnotify_name }}"
+    state: present
+
+- name: Download restic logo
+  ansible.builtin.get_url:
+    url: "{{ backup_restic_alerting_libnotify_icon_url }}"
+    dest: "{{ backup_restic_path }}/assets/notification_icon.png"
+    owner: root
+    group: root
+    mode: '0644'

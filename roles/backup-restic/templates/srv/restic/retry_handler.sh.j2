@@ -1,0 +1,326 @@
+#!/usr/bin/env bash
+
+{{ ansible_managed | comment }}
+
+# set -e -o pipefail -o errexit -o errtrace
+
+# Source extra vars
+source {{ current_backup_path }}/extra_vars
+
+# Source helper functions
+source {{ backup_restic_path }}/scripts/cri_utils.sh
+
+# Hostname
+export HOSTNAME="{{ backup_restic_hostname }}"
+
+# Backup name
+export BACKUP_NAME="{{ current_backup.name }}"
+
+# Script state
+export CRI_BACKUP_HAS_FAILED_ONCE="0"
+
+# Retry settings
+{% if is_prune_host | d(false) %}
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-{{ current_backup.prune_max_attempts | d(backup_restic_default_prune_max_attempts) }}}"
+RETRY_INTERVAL="${RETRY_INTERVAL:-{{ current_backup.prune_retry_interval | d(backup_restic_default_prune_retry_interval) }}}"
+
+# Max CPU load
+CPU_LOAD_CHECK_ENABLED="${CPU_LOAD_CHECK_ENABLED:-{% if current_backup.prune_cpu_load_check_enabled | d(backup_restic_default_prune_cpu_load_check_enabled) | bool %}y{% endif %}}"
+CPU_LOAD_THRESHOLD="${CPU_LOAD_THRESHOLD:-{{ current_backup.prune_cpu_load_threshold | d(backup_restic_default_prune_cpu_load_threshold) }}}"
+
+# Alerting settings
+CRI_DISABLE_ALERTING="${CRI_DISABLE_ALERTING:-{% if not (true in (current_backup.prune_alerting | d({}) | json_query('*.enabled'))) and not backup_restic_prune_alerting %}y{% endif %}}"
+
+export CRI_DISABLE_ALERTING_ON_SUCCESS="${CRI_DISABLE_ALERTING_ON_SUCCESS:-{% if not (current_backup.prune_alerting_on_success | d(backup_restic_prune_alerting_on_success) | bool) %}y{% endif %}}"
+export CRI_ALERTING_ON_SUCCESS_CANARY="${CRI_ALERTING_ON_SUCCESS_CANARY:-{% if current_backup.prune_alerting_on_success_canary | d(backup_restic_prune_alerting_on_success_canary) | bool %}y{% endif %}}"
+export CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT="${CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT:-{{ current_backup.prune_alerting_on_success_canary_percent | d(backup_restic_prune_alerting_on_success_canary_percent) }}}"
+{% if current_backup.prune_alerting.mail.enabled | d(backup_restic_prune_alerting_mail_default) | bool %}
+## Mail
+export CRI_ALERTING_MAIL="${CRI_ALERTING_MAIL:-y}"
+export CRI_ALERTING_MAIL_INCLUDE_LOGS="${CRI_ALERTING_MAIL_INCLUDE_LOGS:-{{ current_backup.prune_alerting.mail.include_logs | d(backup_restic_prune_alerting_mail_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_MAIL_DEST="${CRI_ALERTING_MAIL_DEST:-{{ current_backup.prune_alerting.mail.dest | d(backup_restic_prune_alerting_mail_default_dest) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.slack.enabled | d(backup_restic_prune_alerting_slack_default) | bool %}
+## Slack
+export CRI_ALERTING_SLACK="${CRI_ALERTING_SLACK:-y}"
+export CRI_ALERTING_SLACK_INCLUDE_LOGS="${CRI_ALERTING_SLACK_INCLUDE_LOGS:-{{ current_backup.prune_alerting.slack.include_logs | d(backup_restic_prune_alerting_slack_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_SLACK_CHANNEL="${CRI_ALERTING_SLACK_CHANNEL:-{{ current_backup.prune_alerting.slack.channel | d(backup_restic_prune_alerting_slack_default_channel) }}}"
+export CRI_ALERTING_SLACK_WEBHOOK_URL="${CRI_ALERTING_SLACK_WEBHOOK_URL:-{{ current_backup.prune_alerting.slack.webhook_url | d(backup_restic_prune_alerting_slack_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.mattermost.enabled | d(backup_restic_prune_alerting_mattermost_default) | bool %}
+## Mattermost
+export CRI_ALERTING_MATTERMOST="${CRI_ALERTING_MATTERMOST:-y}"
+export CRI_ALERTING_MATTERMOST_INCLUDE_LOGS="${CRI_ALERTING_MATTERMOST_INCLUDE_LOGS:-{{ current_backup.prune_alerting.mattermost.include_logs | d(backup_restic_prune_alerting_mattermost_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_MATTERMOST_CHANNEL="${CRI_ALERTING_MATTERMOST_CHANNEL:-{{ current_backup.prune_alerting.mattermost.channel | d(backup_restic_prune_alerting_mattermost_default_channel) }}}"
+export CRI_ALERTING_MATTERMOST_WEBHOOK_URL="${CRI_ALERTING_MATTERMOST_WEBHOOK_URL:-{{ current_backup.prune_alerting.mattermost.webhook_url | d(backup_restic_prune_alerting_mattermost_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.healthchecks_io.enabled | d(false) | bool %}
+## Healthchecks.io
+export CRI_ALERTING_HEALTHCHECKS_IO="${CRI_ALERTING_HEALTHCHECKS_IO:-y}"
+export CRI_ALERTING_HEALTHCHECKS_IO_URL="${CRI_ALERTING_HEALTHCHECKS_IO_URL:-{{ current_backup.prune_alerting.healthchecks_io.url }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.telegram.enabled | d(backup_restic_prune_alerting_telegram_default) | bool %}
+## Telegram
+export CRI_ALERTING_TELEGRAM="${CRI_ALERTING_TELEGRAM:-y}"
+export CRI_ALERTING_TELEGRAM_API_KEY="${CRI_ALERTING_TELEGRAM_API_KEY:-{{ current_backup.prune_alerting.telegram.api_key | d(backup_restic_prune_alerting_telegram_api_key) }}}"
+export CRI_ALERTING_TELEGRAM_CHAT_ID="${CRI_ALERTING_TELEGRAM_CHAT_ID:-{{ current_backup.prune_alerting.telegram.chat_id | d(backup_restic_prune_alerting_telegram_chat_id) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.rocketchat.enabled | d(backup_restic_prune_alerting_rocketchat_default) | bool %}
+## Rocketchat
+export CRI_ALERTING_ROCKETCHAT="${CRI_ALERTING_ROCKETCHAT:-y}"
+export CRI_ALERTING_ROCKETCHAT_INCLUDE_LOGS="${CRI_ALERTING_ROCKETCHAT_INCLUDE_LOGS:-{{ current_backup.prune_alerting.rocketchat.include_logs | d(backup_restic_prune_alerting_rocketchat_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_ROCKETCHAT_WEBHOOK_URL="${CRI_ALERTING_ROCKETCHAT_WEBHOOK_URL:-{{ current_backup.prune_alerting.rocketchat.webhook_url | d(backup_restic_prune_alerting_rocketchat_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.discord.enabled | d(backup_restic_prune_alerting_discord_default) | bool %}
+## Discord
+export CRI_ALERTING_DISCORD="${CRI_ALERTING_DISCORD:-y}"
+export CRI_ALERTING_DISCORD_INCLUDE_LOGS="${CRI_ALERTING_DISCORD_INCLUDE_LOGS:-{{ current_backup.prune_alerting.discord.include_logs | d(backup_restic_prune_alerting_discord_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_DISCORD_WEBHOOK_URL="${CRI_ALERTING_DISCORD_WEBHOOK_URL:-{{ current_backup.prune_alerting.discord.webhook_url | d(backup_restic_prune_alerting_discord_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.prune_alerting.node.enabled | d(backup_restic_prune_alerting_node_default) | bool %}
+## Node exporter - File exporter
+export CRI_ALERTING_NODE="${CRI_ALERTING_NODE:-y}"
+export CRI_ALERTING_NODE_USER="${CRI_ALERTING_NODE_USER:-{{ current_backup.prune_alerting.node.user | d(backup_restic_prune_alerting_node_default_user) }}}"
+export CRI_ALERTING_NODE_DIR="${CRI_ALERTING_NODE_DIR:-{{ current_backup.prune_alerting.node.dir | d(backup_restic_prune_alerting_node_default_dir) }}}"
+
+{% endif %}
+{% if backup_restic_desktop_host | d(false) %}
+{% if current_backup.prune_alerting.libnotify.enabled | d(backup_restic_prune_alerting_libnotify_default) | bool %}
+## Libnotify
+export CRI_ALERTING_LIBNOTIFY="${CRI_ALERTING_LIBNOTIFY:-y}"
+export CRI_ALERTING_LIBNOTIFY_USERNAME="${CRI_ALERTING_LIBNOTIFY_USERNAME:-{{ current_backup.prune_alerting.libnotify.username | d(backup_restic_prune_alerting_libnotify_default_username) }}}"
+
+{% endif %}
+{% endif %}
+{% else %}
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-{{ current_backup.max_attempts | d(backup_restic_default_max_attempts) }}}"
+RETRY_INTERVAL="${RETRY_INTERVAL:-{{ current_backup.retry_interval | d(backup_restic_default_retry_interval) }}}"
+
+# Max CPU load
+CPU_LOAD_CHECK_ENABLED="${CPU_LOAD_CHECK_ENABLED:-{% if current_backup.cpu_load_check_enabled | d(backup_restic_default_cpu_load_check_enabled) | bool %}y{% endif %}}"
+CPU_LOAD_THRESHOLD="${CPU_LOAD_THRESHOLD:-{{ current_backup.cpu_load_threshold | d(backup_restic_default_cpu_load_threshold) }}}"
+
+# Alerting settings
+CRI_DISABLE_ALERTING="${CRI_DISABLE_ALERTING:-{% if not (true in (current_backup.alerting | d({}) | json_query('*.enabled'))) and not backup_restic_alerting %}y{% endif %}}"
+
+export CRI_DISABLE_ALERTING_ON_SUCCESS="${CRI_DISABLE_ALERTING_ON_SUCCESS:-{% if not (current_backup.alerting_on_success | d(backup_restic_alerting_on_success) | bool) %}y{% endif %}}"
+export CRI_ALERTING_ON_SUCCESS_CANARY="${CRI_ALERTING_ON_SUCCESS_CANARY:-{% if current_backup.alerting_on_success_canary | d(backup_restic_alerting_on_success_canary) | bool %}y{% endif %}}"
+export CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT="${CRI_ALERTING_ON_SUCCESS_CANARY_PERCENT:-{{ current_backup.alerting_on_success_canary_percent | d(backup_restic_alerting_on_success_canary_percent) }}}"
+{% if current_backup.alerting.mail.enabled | d(backup_restic_alerting_mail_default) | bool %}
+## Mail
+export CRI_ALERTING_MAIL="${CRI_ALERTING_MAIL:-y}"
+export CRI_ALERTING_MAIL_INCLUDE_LOGS="${CRI_ALERTING_MAIL_INCLUDE_LOGS:-{{ current_backup.alerting.mail.include_logs | d(backup_restic_alerting_mail_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_MAIL_DEST="${CRI_ALERTING_MAIL_DEST:-{{ current_backup.alerting.mail.dest | d(backup_restic_alerting_mail_default_dest) }}}"
+
+{% endif %}
+{% if current_backup.alerting.slack.enabled | d(backup_restic_alerting_slack_default) | bool %}
+## Slack
+export CRI_ALERTING_SLACK="${CRI_ALERTING_SLACK:-y}"
+export CRI_ALERTING_SLACK_INCLUDE_LOGS="${CRI_ALERTING_SLACK_INCLUDE_LOGS:-{{ current_backup.alerting.slack.include_logs | d(backup_restic_alerting_slack_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_SLACK_CHANNEL="${CRI_ALERTING_SLACK_CHANNEL:-{{ current_backup.alerting.slack.channel | d(backup_restic_alerting_slack_default_channel) }}}"
+export CRI_ALERTING_SLACK_WEBHOOK_URL="${CRI_ALERTING_SLACK_WEBHOOK_URL:-{{ current_backup.alerting.slack.webhook_url | d(backup_restic_alerting_slack_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.alerting.mattermost.enabled | d(backup_restic_alerting_mattermost_default) | bool %}
+## Mattermost
+export CRI_ALERTING_MATTERMOST="${CRI_ALERTING_MATTERMOST:-y}"
+export CRI_ALERTING_MATTERMOST_INCLUDE_LOGS="${CRI_ALERTING_MATTERMOST_INCLUDE_LOGS:-{{ current_backup.alerting.mattermost.include_logs | d(backup_restic_alerting_mattermost_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_MATTERMOST_CHANNEL="${CRI_ALERTING_MATTERMOST_CHANNEL:-{{ current_backup.alerting.mattermost.channel | d(backup_restic_alerting_mattermost_default_channel) }}}"
+export CRI_ALERTING_MATTERMOST_WEBHOOK_URL="${CRI_ALERTING_MATTERMOST_WEBHOOK_URL:-{{ current_backup.alerting.mattermost.webhook_url | d(backup_restic_alerting_mattermost_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.alerting.healthchecks_io.enabled | d(false) | bool %}
+## Healthchecks.io
+export CRI_ALERTING_HEALTHCHECKS_IO="${CRI_ALERTING_HEALTHCHECKS_IO:-y}"
+export CRI_ALERTING_HEALTHCHECKS_IO_URL="${CRI_ALERTING_HEALTHCHECKS_IO_URL:-{{ current_backup.alerting.healthchecks_io.url }}}"
+
+{% endif %}
+{% if current_backup.alerting.telegram.enabled | d(backup_restic_alerting_telegram_default) | bool %}
+## Telegram
+export CRI_ALERTING_TELEGRAM="${CRI_ALERTING_TELEGRAM:-y}"
+export CRI_ALERTING_TELEGRAM_API_KEY="${CRI_ALERTING_TELEGRAM_API_KEY:-{{ current_backup.alerting.telegram.api_key | d(backup_restic_alerting_telegram_api_key) }}}"
+export CRI_ALERTING_TELEGRAM_CHAT_ID="${CRI_ALERTING_TELEGRAM_CHAT_ID:-{{ current_backup.alerting.telegram.chat_id | d(backup_restic_alerting_telegram_chat_id) }}}"
+
+{% endif %}
+{% if current_backup.alerting.rocketchat.enabled | d(backup_restic_alerting_rocketchat_default) | bool %}
+## Rocketchat
+export CRI_ALERTING_ROCKETCHAT="${CRI_ALERTING_ROCKETCHAT:-y}"
+export CRI_ALERTING_ROCKETCHAT_INCLUDE_LOGS="${CRI_ALERTING_ROCKETCHAT_INCLUDE_LOGS:-{{ current_backup.alerting.rocketchat.include_logs | d(backup_restic_alerting_rocketchat_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_ROCKETCHAT_WEBHOOK_URL="${CRI_ALERTING_ROCKETCHAT_WEBHOOK_URL:-{{ current_backup.alerting.rocketchat.webhook_url | d(backup_restic_alerting_rocketchat_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.alerting.discord.enabled | d(backup_restic_alerting_discord_default) | bool %}
+## Discord
+export CRI_ALERTING_DISCORD="${CRI_ALERTING_DISCORD:-y}"
+export CRI_ALERTING_DISCORD_INCLUDE_LOGS="${CRI_ALERTING_DISCORD_INCLUDE_LOGS:-{{ current_backup.alerting.discord.include_logs | d(backup_restic_alerting_discord_default_include_logs) | ternary('y', 'n') }}}"
+export CRI_ALERTING_DISCORD_WEBHOOK_URL="${CRI_ALERTING_DISCORD_WEBHOOK_URL:-{{ current_backup.alerting.discord.webhook_url | d(backup_restic_alerting_discord_default_webhook_url) }}}"
+
+{% endif %}
+{% if current_backup.alerting.node.enabled | d(backup_restic_alerting_node_default) | bool %}
+## Node exporter - File exporter
+export CRI_ALERTING_NODE="${CRI_ALERTING_NODE:-y}"
+export CRI_ALERTING_NODE_USER="${CRI_ALERTING_NODE_USER:-{{ current_backup.alerting.node.user | d(backup_restic_alerting_node_default_user) }}}"
+export CRI_ALERTING_NODE_DIR="${CRI_ALERTING_NODE_DIR:-{{ current_backup.alerting.node.dir | d(backup_restic_alerting_node_default_dir) }}}"
+
+{% endif %}
+{% if backup_restic_desktop_host | d(false) %}
+{% if current_backup.alerting.libnotify.enabled | d(backup_restic_alerting_libnotify_default) | bool %}
+## Libnotify
+export CRI_ALERTING_LIBNOTIFY="${CRI_ALERTING_LIBNOTIFY:-y}"
+export CRI_ALERTING_LIBNOTIFY_USERNAME="${CRI_ALERTING_LIBNOTIFY_USERNAME:-{{ current_backup.alerting.libnotify.username | d(backup_restic_alerting_libnotify_default_username) }}}"
+
+{% endif %}
+{% endif %}
+{% endif %}
+
+# Functions
+cpu_load_check()
+{
+    local threshold="${CPU_LOAD_THRESHOLD}"
+    local current_cpu_load=""
+    local nb_cores=""
+
+    if [ -z "$threshold" ]; then
+        # if threshold is not defined by the user, use nb of cores as a default value
+        echoInfo "No CPU load threshold was defined by the user, number of cores will be used as a default."
+        nb_cores="$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)"
+
+        if [ "$nb_cores" -eq "0" ]; then
+            echoWarn "Failed to get the number of cores, defaulting to threshold = 1"
+            nb_cores=1
+        fi
+        threshold="${nb_cores:-1}"
+    fi
+
+    current_cpu_load="$(cut -f1 -d ' ' /proc/loadavg)"
+
+    echoInfo "CPU load: ${current_cpu_load}"
+    if [ "$(echo "$current_cpu_load < $threshold" | bc)" -eq 0 ]; then
+        echoWarn "Load is too high ($current_cpu_load > $threshold), aborting.."
+        return 1
+    fi
+    return 0
+}
+
+retry_output_wrapper()
+{
+    local restic_rc
+    if [[ -n "${ATTEMPT}" && -n "${MAX_ATTEMPTS}" ]]; then
+        local cmd_attempt_info="echoInfo"
+        if [ "${ATTEMPT}" -gt 1 ]; then
+            cmd_attempt_info="echoWarn"
+        fi
+        ${cmd_attempt_info} "Attempt [${ATTEMPT}/${MAX_ATTEMPTS}].."
+    fi
+
+    if [[ "${CPU_LOAD_CHECK_ENABLED}" =~ ^(y|Y) ]]; then
+        if ! cpu_load_check; then
+            return 254
+        fi
+    fi
+
+    {{ current_backup_path }}/{{ current_backup.name }}.sh "$@"
+
+    # Get return code
+    restic_rc="$?"
+
+    if [ "${restic_rc}" -ne "0" ]; then
+        echoErr "rc: ${restic_rc}"
+    fi
+
+    return "${restic_rc}"
+}
+
+alerting_wrapper()
+{
+    # Simple wrapper that duplicated output if needed
+
+    local cmd_rc
+
+    local start_epoch="0"
+    local end_epoch="0"
+
+    # We only want so send an alert for cri_functions
+    if [[ ! "${CRI_DISABLE_ALERTING}" =~ ^(y|Y) && "${1}" =~ cri_* ]]; then
+
+        start_epoch="$(date +%s)"
+
+        # Current special cri_function
+        cri_operation="${1}"
+
+        # Create temp file to save restic output
+        local cmd_output_file
+        cmd_output_file="$(mktemp /tmp/restic_output_XXXXXXXXXX.log)"
+
+        # Exec with tee wrapper to duplicate output
+        retry_output_wrapper "$@" > >(tee -a "${cmd_output_file}") 2>&1
+        cmd_rc="$?"
+
+        if [ "${cmd_rc}" -ne "0" ]; then
+            export CRI_BACKUP_HAS_FAILED_ONCE="1"
+        fi
+
+        end_epoch="$(date +%s)"
+
+        if [[ -n "${cmd_output_file}" && -f "${cmd_output_file}" ]]; then
+            # Send an alert
+            if ! {{ backup_restic_path }}/scripts/cri_alerting.sh \
+                -r "${cmd_rc}" \
+                -t "${cri_operation}" \
+                -l "${cmd_output_file}" \
+                -s "${start_epoch}" \
+                -e "${end_epoch}" ; then
+                echoErr "Alerting failed for ${cri_operation}"
+            fi
+
+            # Clean tmp log file
+            rm -rf "${cmd_output_file}"
+        else
+            if ! {{ backup_restic_path }}/scripts/cri_alerting.sh \
+                -r "${cmd_rc}" \
+                -t "${cri_operation}" \
+                -s "${start_epoch}" \
+                -e "${end_epoch}" ; then
+                echoErr "Alerting failed for ${cri_operation}"
+            fi
+        fi
+    else
+        retry_output_wrapper "$@"
+        cmd_rc="$?"
+    fi
+    return "${cmd_rc}"
+}
+
+main()
+{
+    dynamic_retry_interval="${RETRY_INTERVAL}"
+
+    for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+        # We only want to sleep after the first fail
+        if [ "${ATTEMPT}" -gt 1 ]; then
+            echoInfo "Next attempt (${ATTEMPT}/${MAX_ATTEMPTS}) in ${dynamic_retry_interval}s.."
+            sleep "${dynamic_retry_interval}"
+            dynamic_retry_interval="$(( ATTEMPT * RETRY_INTERVAL ))"
+        fi
+
+        # Call the target script
+        alerting_wrapper "$@" && rc="$?" && break || rc="$?"
+    done
+
+    if [ "${ATTEMPT}" -gt "${MAX_ATTEMPTS}" ]; then
+      echoErr "Failed after ${MAX_ATTEMPTS} attempts!"
+      exit 1
+    fi
+
+    # Return with the last useful exit code
+    return "${rc}"
+}
+
+[[ "$0" == "${BASH_SOURCE[0]}" ]] && main "$@"
